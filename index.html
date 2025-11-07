@@ -1,5 +1,5 @@
 <!-- Chosen Palette: Warm Neutral (Tailwind Slate/Stone com Acento Azul) -->
-<!-- Layout: Menu Lateral Fixo (WIP) -->
+<!-- Layout: Menu Lateral Fixo com Ecrã de Login -->
 <!DOCTYPE html>
 <html lang="pt-br" style="font-size: 15px; --font-family: 'Inter', sans-serif;">
 <head>
@@ -17,12 +17,16 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-        // Lógica de autenticação revertida para a versão simples
+        // Lógica de autenticação alterada para Login real
         import {
             getAuth,
-            signInAnonymously,
-            signInWithCustomToken,
-            onAuthStateChanged
+            onAuthStateChanged,
+            GoogleAuthProvider,
+            signInWithPopup,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut
+            // Removido: signInAnonymously, signInWithCustomToken
         } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
         import {
             getFirestore,
@@ -37,7 +41,7 @@
             query,
             where,
             getDocs,
-            limit // Adicionado limit para seedInitialData
+            limit 
         } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
         
         // Importação do Firebase Storage
@@ -54,8 +58,6 @@
         // --- Configuração ---
         const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         
-        // Configuração real do Firebase (fornecida pelo usuário)
-        // Esta configuração funcionará no GitHub.
         const userFirebaseConfig = {
             apiKey: "AIzaSyBZ76yd8RbRQVjbJ115QqL3oDztxedq0OY",
             authDomain: "agmm-16a91.firebaseapp.com",
@@ -66,14 +68,14 @@
             measurementId: "G-B56XH56SLB"
         };
         
-        // Usa a config do ambiente (pré-visualização) se disponível, senão, usa a config do usuário (GitHub)
         const firebaseConfig = firebaseConfigFromEnv || userFirebaseConfig;
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'sgap-default-app';
         
         let db, auth, userId;
-        let app, storage; // Adicionado storage
-        let analytics; // Adicionado analytics
+        let app, storage; 
+        let analytics; 
+        let firestoreListeners = []; // Array para guardar listeners
 
         // --- Collections ---
         let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection, usuariosCollection;
@@ -91,9 +93,10 @@
             atividades: [],
             clientes: [],
             tarefasPadrao: [],
-            currentMainView: 'pautas', // 'pautas', 'dashboard' ou 'admin'
-            currentPautasView: 'calendario', // 'calendario', 'semana' ou 'lista'
-            currentAdminView: 'funcionarios', // 'funcionarios', 'cargos', 'clientes' ou 'tarefas'
+            usuarios: [], // Para o painel de admin
+            currentMainView: 'pautas', 
+            currentPautasView: 'calendario', 
+            currentAdminView: 'funcionarios', 
             currentDate: new Date(),
             editingId: null,
             editingCollection: null,
@@ -106,7 +109,7 @@
             dashboardChart: null, 
             dashboardDoughnutChart: null,
             isSidebarMinimized: false,
-            themeColor: '#648AAE', // Padrão Azul Sereno
+            themeColor: '#648AAE', 
             
             // Estado de Autenticação
             currentUser: null,
@@ -126,8 +129,9 @@
         });
 
         function cacheDOMElements() {
-            // Views Principais
+            // Vistas Principais
             dom.appView = document.getElementById('app-view');
+            dom.loginView = document.getElementById('login-view'); // Novo Ecrã de Login
             dom.mainViewPautas = document.getElementById('main-view-pautas');
             dom.mainViewDashboard = document.getElementById('main-view-dashboard');
             dom.mainViewAdmin = document.getElementById('main-view-admin');
@@ -193,11 +197,19 @@
             dom.themeFontSizeIncrease = document.getElementById('theme-font-size-increase');
             dom.themeReset = document.getElementById('theme-reset');
             
-            // Adicionado de volta para erros do GitHub
-            dom.configError = document.getElementById('config-error');
+            // Ecrã de Login
+            dom.loginForm = document.getElementById('login-form');
+            dom.loginEmail = document.getElementById('login-email');
+            dom.loginPassword = document.getElementById('login-password');
+            dom.loginEmailBtn = document.getElementById('login-email-btn');
+            dom.loginGoogleBtn = document.getElementById('login-google-btn');
+            dom.loginMessage = document.getElementById('login-message');
+            dom.loginTitle = document.getElementById('login-title');
+            dom.toggleToCreate = document.getElementById('toggle-to-create');
+            dom.toggleToLogin = document.getElementById('toggle-to-login');
         }
         
-        // --- Funções Utilitárias de Tema (Movidas para o topo) ---
+        // --- Funções Utilitárias de Tema ---
         function getLuminance(hex) {
             let r = 0, g = 0, b = 0;
             if (hex.length == 7) {
@@ -209,7 +221,6 @@
         }
         
         function shadeColor(color, percent) {
-            // Garante que a cor é um hex válido
             if (!color || !color.startsWith('#') || color.length < 7) {
                 console.warn("Cor inválida para shadeColor:", color);
                 color = '#648AAE'; // Cor padrão (Azul Sereno)
@@ -238,30 +249,13 @@
         }
 
         async function initFirebase() {
-            
-            // --- NOVO: Temporizador de Segurança ---
-            // Se a autenticação (anônima ou token) não funcionar em 5 segundos,
-            // força a exibição de um erro em vez de um ecrã branco.
-            setTimeout(() => {
-                if (!state.isAuthReady) {
-                    console.error("Firebase auth timeout. Forcing error message.");
-                    showConfigError(
-                        "Falha na Ligação",
-                        "A aplicação não conseguiu ligar-se ao Firebase. Isto pode dever-se a: \n1. Falha de rede. \n2. O 'Sign-in anônimo' (Anonymous sign-in) estar desativado no painel do Firebase (Authentication -> Sign-in method)."
-                    );
-                }
-            }, 5000); // 5 segundos de timeout
-            // --- FIM DO NOVO ---
-            
             try {
-                // VERIFICAÇÃO DE CONFIG (REMOVIDA - Config real foi adicionada)
-                
                 setLogLevel('Debug');
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                storage = getStorage(app); // Inicializa o Storage
-                analytics = getAnalytics(app); // Inicializa o Analytics
+                storage = getStorage(app); 
+                analytics = getAnalytics(app); 
 
                 cargosCollection = collection(db, cargosPath);
                 funcionariosCollection = collection(db, funcionariosPath);
@@ -272,61 +266,45 @@
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
+                        // Utilizador está logado
                         userId = user.uid;
                         state.currentUser = user;
                         
-                        // Define perfil de usuário (cria se não existir)
-                        await checkUserRole(user); 
+                        await checkUserRole(user); // Define/Cria a função do utilizador
                         
-                        dom.userIdDisplay.textContent = `ID: ${userId.substring(0, 8)}...`; 
+                        dom.userIdDisplay.textContent = user.displayName || user.email || `ID: ${userId.substring(0, 8)}...`; 
                         state.isAuthReady = true;
                         
-                        // Esconde erro (se houver) e mostra app
-                        dom.configError.classList.add('hidden');
+                        // Mostra app, esconde login
                         dom.appView.classList.remove('hidden');
+                        dom.loginView.classList.add('hidden');
 
                         await seedInitialData(); 
                         
                         setupFirestoreListeners();
-                        render();
+                        render(); // Renderiza a view correta
                     } else {
-                        // Ninguém logado, tenta autenticação de fallback
-                        try {
-                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                                // Caminho da Pré-visualização
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                // Caminho do GitHub
-                                console.log("Tentando login anônimo...");
-                                await signInAnonymously(auth);
-                            }
-                        } catch (authError) {
-                            // Erro no login (ex: Anônimo desativado)
-                            console.error("Erro na autenticação de fallback:", authError);
-                            showConfigError("Falha na Autenticação", "Não foi possível autenticar anonimamente. Se for o proprietário, por favor, verifique no seu painel Firebase se o 'Sign-in anônimo' (Anonymous sign-in) está ativado na secção Authentication.");
-                        }
+                        // Ninguém logado
+                        userId = null;
+                        state.currentUser = null;
+                        state.userRole = null;
+                        state.isAuthReady = false;
+                        
+                        // Mostra login, esconde app
+                        dom.appView.classList.add('hidden');
+                        dom.loginView.classList.remove('hidden');
+                        
+                        // Limpa listeners antigos se existirem
+                        firestoreListeners.forEach(unsubscribe => unsubscribe());
+                        firestoreListeners = [];
                     }
                 });
             } catch (error) {
                 // Erro na inicialização (ex: config errada)
                 console.error("Erro ao inicializar Firebase:", error);
-                showConfigError("Erro de Configuração", "A sua aplicação não conseguiu ligar-se ao Firebase. Verifique se a 'firebaseConfig' está correta e se o domínio está autorizado.");
-            }
-        }
-        
-        // --- Nova Função de Erro ---
-        function showConfigError(title, message) {
-            if(dom.configError) {
-                dom.configError.innerHTML = `
-                    <h1 class="text-2xl font-bold text-red-600 mb-4">${title}</h1>
-                    <p class="text-stone-700 mb-2">${message}</p>
-                    <p class="text-stone-600">Por favor, verifique a consola (F12) para mais detalhes.</p>
-                `;
+                dom.loginMessage.textContent = "Erro grave de configuração. Verifique a consola.";
                 dom.appView.classList.add('hidden');
-                dom.configError.classList.remove('hidden');
-            } else {
-                // Fallback extremo
-                alert(`ERRO: ${title} - ${message}`);
+                dom.loginView.classList.remove('hidden');
             }
         }
         
@@ -342,32 +320,11 @@
                 const adminQuery = query(usuariosCollection, where('role', '==', 'admin'));
                 const adminSnapshot = await getDocs(adminQuery);
                 
-                let newRole;
-                let userEmail = user.email;
-                let userName;
-
-                if (user.isAnonymous) {
-                    newRole = 'leitor'; // Visitantes são sempre 'leitor'
-                    userEmail = null;
-                    userName = 'Visitante';
-                } else {
-                    newRole = adminSnapshot.empty ? 'admin' : 'leitor'; // Primeiro usuário = admin
-                    userEmail = user.email; // Mantém null se for o caso
-                    
-                    // --- CORREÇÃO ---
-                    // Trata o caso de tokens customizados (preview) que não têm email nem nome
-                    if (user.displayName) {
-                        userName = user.displayName;
-                    } else if (user.email) {
-                        userName = user.email.split('@')[0];
-                    } else {
-                        userName = "Usuário"; // Nome padrão para token customizado sem dados
-                    }
-                    // --- FIM DA CORREÇÃO ---
-                }
+                const newRole = adminSnapshot.empty ? 'admin' : 'leitor'; // Primeiro usuário = admin
+                const userName = user.displayName || user.email.split('@')[0];
                 
                 const newUserProfile = {
-                    email: userEmail,
+                    email: user.email,
                     nome: userName,
                     role: newRole,
                     uid: user.uid,
@@ -381,53 +338,77 @@
         }
 
         function setupFirestoreListeners() {
-            if (!state.isAuthReady) return;
+            // Limpa listeners antigos antes de criar novos
+            firestoreListeners.forEach(unsubscribe => unsubscribe());
+            firestoreListeners = [];
 
-            // Permissões: Apenas 'leitor' e acima podem ler
-            if (!state.userRole) {
+            if (!state.isAuthReady || !state.userRole) {
                  console.warn("Usuário sem função, não é possível ler dados.");
                  return;
             }
 
-            onSnapshot(query(cargosCollection), (snapshot) => {
+            // Apenas 'leitor' e acima podem ler
+            let listener;
+            listener = onSnapshot(query(cargosCollection), (snapshot) => {
                 state.cargos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 state.cargos.sort((a, b) => a.nome.localeCompare(b.nome));
                 render();
             }, (error) => console.error("Erro ao ouvir 'cargos':", error));
+            firestoreListeners.push(listener);
 
-            onSnapshot(query(funcionariosCollection), (snapshot) => {
+            listener = onSnapshot(query(funcionariosCollection), (snapshot) => {
                 state.funcionarios = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 state.funcionarios.sort((a, b) => a.nome.localeCompare(b.nome));
                 render();
             }, (error) => console.error("Erro ao ouvir 'funcionarios':", error));
+            firestoreListeners.push(listener);
 
-            onSnapshot(query(atividadesCollection), (snapshot) => {
+            listener = onSnapshot(query(atividadesCollection), (snapshot) => {
                 state.atividades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 render();
             }, (error) => console.error("Erro ao ouvir 'atividades':", error));
+            firestoreListeners.push(listener);
             
-            onSnapshot(query(clientesCollection), (snapshot) => {
+            listener = onSnapshot(query(clientesCollection), (snapshot) => {
                 state.clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 state.clientes.sort((a, b) => a.nome.localeCompare(b.nome));
                 render();
             }, (error) => console.error("Erro ao ouvir 'clientes':", error));
+            firestoreListeners.push(listener);
 
-            onSnapshot(query(tarefasPadraoCollection), (snapshot) => {
+            listener = onSnapshot(query(tarefasPadraoCollection), (snapshot) => {
                 state.tarefasPadrao = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 state.tarefasPadrao.sort((a, b) => a.nome.localeCompare(b.nome));
                 render(); 
             }, (error) => console.error("Erro ao ouvir 'tarefasPadrao':", error));
+            firestoreListeners.push(listener);
+            
+            // Apenas 'admin' pode ler a lista de usuários
+            if (state.userRole === 'admin') {
+                listener = onSnapshot(query(usuariosCollection), (snapshot) => {
+                    state.usuarios = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    state.usuarios.sort((a, b) => a.nome.localeCompare(b.nome));
+                    renderAdmin(); // Re-renderiza admin para atualizar a lista
+                }, (error) => console.error("Erro ao ouvir 'usuarios':", error));
+                firestoreListeners.push(listener);
+            }
         }
 
         // --- Event Handlers ---
         function setupUIEventListeners() {
+            // Ecrã de Login
+            dom.loginGoogleBtn.addEventListener('click', handleGoogleLogin);
+            dom.loginEmailBtn.addEventListener('click', handleEmailLoginOrCreate);
+            dom.toggleToCreate.addEventListener('click', () => toggleLoginMode(true));
+            dom.toggleToLogin.addEventListener('click', () => toggleLoginMode(false));
+            dom.btnLogout.addEventListener('click', () => signOut(auth)); // Botão Sair
+            
             // Navegação
             dom.menuPautas.addEventListener('click', () => switchMainView('pautas'));
             dom.menuDashboard.addEventListener('click', () => switchMainView('dashboard'));
             dom.menuAdmin.addEventListener('click', () => switchMainView('admin'));
             dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
             dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
-            dom.btnLogout.addEventListener('click', () => auth.signOut()); // Sair
 
             // Navegação Secundária (Delegação)
             dom.pautasNav.addEventListener('click', (e) => {
@@ -474,26 +455,121 @@
             // Menu Lateral
             dom.sidebarToggleButton.addEventListener('click', toggleSidebar);
         }
+        
+        // --- Funções de Autenticação ---
+        function toggleLoginMode(isCreatingAccount) {
+            if (isCreatingAccount) {
+                dom.loginTitle.textContent = 'Criar Conta';
+                dom.loginEmailBtn.textContent = 'Criar Conta';
+                dom.toggleToCreate.classList.add('hidden');
+                dom.toggleToLogin.classList.remove('hidden');
+                dom.loginGoogleBtn.classList.add('hidden'); // Esconde Google ao criar conta
+            } else {
+                dom.loginTitle.textContent = 'Aceder à Plataforma';
+                dom.loginEmailBtn.textContent = 'Entrar com Email';
+                dom.toggleToCreate.classList.remove('hidden');
+                dom.toggleToLogin.classList.add('hidden');
+                dom.loginGoogleBtn.classList.remove('hidden'); // Mostra Google ao fazer login
+            }
+        }
+        
+        async function handleGoogleLogin() {
+            const provider = new GoogleAuthProvider();
+            dom.loginMessage.textContent = "";
+            try {
+                await signInWithPopup(auth, provider);
+                // onAuthStateChanged vai tratar o resto
+            } catch (error) {
+                console.error("Erro no login com Google:", error);
+                dom.loginMessage.textContent = `Erro: ${error.message}`;
+            }
+        }
+        
+        async function handleEmailLoginOrCreate(e) {
+            e.preventDefault();
+            const email = dom.loginEmail.value;
+            const password = dom.loginPassword.value;
+            const isCreating = dom.toggleToLogin.classList.contains('hidden'); // Se o botão "Já tem conta?" está visível, está a criar
+            
+            dom.loginMessage.textContent = "";
+
+            if (!email || !password) {
+                dom.loginMessage.textContent = "Por favor, preencha email e senha.";
+                return;
+            }
+
+            try {
+                if (isCreating) {
+                    // Criar conta
+                    dom.loginMessage.textContent = "Criando conta...";
+                    await createUserWithEmailAndPassword(auth, email, password);
+                } else {
+                    // Fazer login
+                    dom.loginMessage.textContent = "A entrar...";
+                    await signInWithEmailAndPassword(auth, email, password);
+                }
+                // onAuthStateChanged vai tratar o resto
+            } catch (error) {
+                console.error("Erro no login/registo:", error);
+                if (error.code === 'auth/email-already-in-use') {
+                    dom.loginMessage.textContent = "Este email já está em uso. Tente fazer login.";
+                } else if (error.code === 'auth/weak-password') {
+                    dom.loginMessage.textContent = "A senha deve ter pelo menos 6 caracteres.";
+                } else if (error.code === 'auth/invalid-credential') {
+                     dom.loginMessage.textContent = "Email ou senha incorretos.";
+                } else {
+                    dom.loginMessage.textContent = `Erro: ${error.message}`;
+                }
+            }
+        }
 
         function handleAdminContentClick(e) {
             // Verifica permissão
-            if (state.userRole === 'leitor') {
-                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+            if (state.userRole !== 'admin') { // Apenas admin pode mexer no painel
+                showToast("Apenas 'admins' podem alterar dados aqui.", 'error');
                 return;
             }
 
             const btn = e.target.closest('button');
-            if (!btn) return;
+            if (btn) {
+                const action = btn.dataset.action;
+                const id = btn.dataset.id;
+                
+                if (action === 'add') {
+                    openModal(state.currentAdminView);
+                } else if (action === 'edit') {
+                    openModal(state.currentAdminView, id);
+                } else if (action === 'delete') {
+                    openDeleteModal(id, state.currentAdminView);
+                }
+            }
             
-            const action = btn.dataset.action;
-            const id = btn.dataset.id;
+            // Handler para a mudança de 'role'
+            const select = e.target.closest('select[data-action="change-role"]');
+            if (select) {
+                const uid = select.dataset.uid;
+                const newRole = select.value;
+                if (uid && newRole) {
+                    updateUserRole(uid, newRole);
+                }
+            }
+        }
+        
+        async function updateUserRole(uid, newRole) {
+            if (uid === state.currentUser.uid) {
+                showToast("Não pode alterar a sua própria função.", 'error');
+                renderAdmin(); // Reverte a seleção visualmente
+                return;
+            }
             
-            if (action === 'add') {
-                openModal(state.currentAdminView);
-            } else if (action === 'edit') {
-                openModal(state.currentAdminView, id);
-            } else if (action === 'delete') {
-                openDeleteModal(id, state.currentAdminView);
+            try {
+                const userDocRef = doc(db, usuariosPath, uid);
+                await updateDoc(userDocRef, { role: newRole });
+                showToast("Função do usuário atualizada com sucesso.", 'success');
+                // O listener onSnapshot vai atualizar o 'state.usuarios' e chamar o renderAdmin()
+            } catch (error) {
+                console.error("Erro ao atualizar função:", error);
+                showToast("Erro ao atualizar função.", 'error');
             }
         }
         
@@ -505,7 +581,7 @@
             const id = target.dataset.id;
             
             if (action === 'edit' || action === 'delete') {
-                // Verifica permissão
+                // Verifica permissão (Admin ou Editor)
                 if (state.userRole === 'leitor') {
                     showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
                     return;
@@ -584,7 +660,6 @@
         function applyTheme(themeName, font, customColor) {
             const root = document.documentElement;
             
-            // 1. Aplicar Paleta de Cores
             if (themeName) {
                 root.classList.remove('theme-solar', 'theme-laranja', 'theme-custom');
                 let accentColor;
@@ -601,31 +676,27 @@
                     accentColor = customColor;
                     root.classList.add('theme-custom');
                 } else {
-                    accentColor = state.themeColor; // Manter a cor atual se themeName for nulo
+                    accentColor = state.themeColor; 
                 }
                 
                 if (accentColor) {
-                    state.themeColor = accentColor; // Armazena a cor principal no estado
+                    state.themeColor = accentColor; 
                     root.style.setProperty('--color-accent', accentColor);
                     
-                    // Deriva cores mais escuras
                     const darkColor = shadeColor(accentColor, -20);
                     const darkerColor = shadeColor(accentColor, -30);
                     root.style.setProperty('--color-accent-dark', darkColor);
                     root.style.setProperty('--color-accent-darker', darkerColor);
 
-                    // Deriva cores claras
                     const lightColor = shadeColor(accentColor, 70);
                     const lighterColor = shadeColor(accentColor, 85);
                     root.style.setProperty('--color-accent-light', lightColor);
                     root.style.setProperty('--color-accent-light-hover', lighterColor);
 
-                    // Decide a cor do texto (preto ou branco)
                     const luminance = getLuminance(accentColor);
                     const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF'; 
                     root.style.setProperty('--color-accent-text', textColor);
                     
-                    // Atualiza os inputs do modal
                     dom.themeColorPicker.value = accentColor;
                     dom.themeHexInput.value = accentColor;
                 }
@@ -636,7 +707,6 @@
                 }
             }
 
-            // 2. Aplicar Fonte
             if (font) {
                 const fontMap = {
                     'Inter': "'Inter', sans-serif",
@@ -649,15 +719,13 @@
                 dom.themeFontSelect.value = font;
             }
 
-            // Força a re-renderização dos gráficos para pegar novas cores
-            // (Chamado dentro do render() principal)
             if(state.isAuthReady) renderDashboard();
         }
 
         function adjustFontSize(delta) {
             const root = document.documentElement;
             let currentSize = parseFloat(getComputedStyle(root).fontSize);
-            let newSize = Math.max(12, Math.min(18, currentSize + delta)); // Limita entre 12px e 18px
+            let newSize = Math.max(12, Math.min(18, currentSize + delta)); 
             root.style.fontSize = `${newSize}px`;
             localStorage.setItem('sgap_theme_fontsize', `${newSize}px`);
         }
@@ -669,7 +737,7 @@
             localStorage.removeItem('sgap_theme_fontsize');
             
             document.documentElement.style.fontSize = '15px';
-            applyTheme('sereno', 'Inter'); // Volta ao padrão
+            applyTheme('sereno', 'Inter'); 
         }
 
         function applyThemeFromLocalStorage() {
@@ -687,9 +755,7 @@
             applyTheme(themeName, font, customColor);
         }
         
-        // --- Nova Função: Carregar Estado do LocalStorage ---
         function loadStateFromLocalStorage() {
-            // Carregar Navegação
             const savedMainView = localStorage.getItem('sgap_currentMainView');
             if (savedMainView) state.currentMainView = savedMainView;
             
@@ -699,7 +765,6 @@
             const savedAdminView = localStorage.getItem('sgap_currentAdminView');
             if (savedAdminView) state.currentAdminView = savedAdminView;
             
-            // Carregar Filtros
             const savedPeriodo = localStorage.getItem('sgap_filterPeriodo');
             if (savedPeriodo) state.filterPeriodo = savedPeriodo;
 
@@ -715,7 +780,6 @@
             const savedTarefa = localStorage.getItem('sgap_filterTarefa');
             if (savedTarefa) state.filterTarefa = savedTarefa;
             
-            // Carregar Menu Lateral
             const savedSidebarState = localStorage.getItem('sgap_sidebarMinimized');
             state.isSidebarMinimized = (savedSidebarState === 'true');
             applySidebarState();
@@ -753,29 +817,25 @@
             const toggleBtn = dom.sidebarToggleButton;
             const title = dom.sidebarTitle;
 
-            // Adiciona/Remove classe no body para CSS
+            if (!menu || !main || !toggleBtn || !title) return; // Proteção
+
             document.body.classList.toggle('sidebar-minimized', isMinimized);
 
-            // Ajusta o menu
             menu.classList.toggle('w-64', !isMinimized);
-            menu.classList.toggle('w-20', isMinimized); // Largura minimizada
+            menu.classList.toggle('w-20', isMinimized); 
 
-            // Ajusta o conteúdo principal
             main.classList.toggle('md:ml-64', !isMinimized);
             main.classList.toggle('md:ml-20', isMinimized);
 
-            // Esconde/Exibe texto e título
             menu.querySelectorAll('.sidebar-text').forEach(text => {
                 text.classList.toggle('hidden', isMinimized);
             });
-            // Adicionado: Esconde/Exibe os ícones de navegação
             menu.querySelectorAll('.sidebar-nav-icon').forEach(icon => {
                 icon.classList.toggle('hidden', !isMinimized);
             });
             
-            if(title) title.classList.toggle('hidden', isMinimized);
+            title.classList.toggle('hidden', isMinimized);
 
-            // Centraliza ícones
             menu.querySelectorAll('.menu-btn').forEach(btn => {
                 btn.classList.toggle('justify-center', isMinimized);
                 btn.classList.toggle('justify-start', !isMinimized);
@@ -786,7 +846,6 @@
                 dom.userIdDisplayWrapper.classList.toggle('justify-start', !isMinimized);
             }
             
-            // Atualiza o botão de toggle
             if (toggleBtn) {
                 const icon = toggleBtn.querySelector('svg');
                 if (isMinimized) {
@@ -799,42 +858,44 @@
 
         // --- Troca de Views ---
         function switchMainView(view) {
+            // Se 'leitor' tentar aceder ao 'admin', bloqueia
+            if (view === 'admin' && state.userRole === 'leitor') {
+                showToast("Apenas 'admins' podem aceder a esta área.", "error");
+                return;
+            }
+            
             state.currentMainView = view;
             
-            // Atualiza botões do menu
             dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
             dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
             dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
 
-            // Exibe a view correta
             dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
             dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
             dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
             
             render();
-            localStorage.setItem('sgap_currentMainView', view); // Salvar
+            localStorage.setItem('sgap_currentMainView', view); 
         }
 
         function switchPautasView(view) {
             state.currentPautasView = view;
-            // Atualiza botões da sub-navegação
             Array.from(dom.pautasNav.querySelectorAll('button[data-view]')).forEach(btn => {
                 btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
                 btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
             });
             renderPautas();
-            localStorage.setItem('sgap_currentPautasView', view); // Salvar
+            localStorage.setItem('sgap_currentPautasView', view); 
         }
 
         function switchAdminView(view) {
             state.currentAdminView = view;
-             // Atualiza botões da sub-navegação
-            Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
+             Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
                 btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
                 btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
             });
             renderAdmin();
-            localStorage.setItem('sgap_currentAdminView', view); // Salvar
+            localStorage.setItem('sgap_currentAdminView', view); 
         }
 
         // --- Renderização Principal ---
@@ -851,24 +912,24 @@
                 renderAdmin();
             }
             
-            // Atualiza visibilidade de elementos com base na função
             updateUIVisibility();
         }
         
         function updateUIVisibility() {
-            // Botão "Lançar Atividade" e Menu "Administrativo"
             const canEdit = (state.userRole === 'admin' || state.userRole === 'editor');
-            if(dom.btnLancarAtividadeMenu) dom.btnLancarAtividadeMenu.classList.toggle('hidden', !canEdit);
-            if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !canEdit);
+            const isAdmin = (state.userRole === 'admin');
             
-            // Se o usuário é 'leitor' e estava na view 'admin', redireciona
-            if(state.userRole === 'leitor' && state.currentMainView === 'admin') {
+            if(dom.btnLancarAtividadeMenu) dom.btnLancarAtividadeMenu.classList.toggle('hidden', !canEdit);
+            if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !isAdmin); // Apenas admin vê o menu
+            
+            if(!isAdmin && state.currentMainView === 'admin') {
                 switchMainView('pautas');
             }
         }
         
         function renderAdmin() {
-            if (!dom.adminContent) return;
+            if (!dom.adminContent || state.userRole !== 'admin') return; // Proteção
+            
             if (state.currentAdminView === 'funcionarios') {
                 renderAdminFuncionarios();
             } else if (state.currentAdminView === 'cargos') {
@@ -877,6 +938,8 @@
                 renderAdminClientes();
             } else if (state.currentAdminView === 'tarefas') {
                 renderAdminTarefas();
+            } else if (state.currentAdminView === 'usuarios') {
+                renderAdminUsuarios();
             }
         }
 
@@ -885,7 +948,6 @@
         function renderFiltros() {
             if (!dom.filterFuncionario) return; 
 
-            // Ler do 'state' (que foi carregado do localStorage)
             const selPeriodo = state.filterPeriodo;
             const selFunc = state.filterFuncionario;
             const selCargo = state.filterCargo;
@@ -916,7 +978,6 @@
             });
             dom.filterTarefa.innerHTML = tarefaOptions;
 
-            // Restaurar seleção a partir do 'state'
             if(dom.filterPeriodo) dom.filterPeriodo.value = selPeriodo;
             if(dom.filterFuncionario) dom.filterFuncionario.value = selFunc;
             if(dom.filterCargo) dom.filterCargo.value = selCargo;
@@ -928,7 +989,6 @@
             let agora = new Date(); 
             let atividadesFiltradas = state.atividades;
         
-            // 1. Filtro de Período (APENAS PARA VIEW 'LISTA' ou 'DASHBOARD')
             if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard') {
                 if (state.filterPeriodo === 'hoje') {
                     const hojeStr = agora.toISOString().split('T')[0];
@@ -938,15 +998,15 @@
                     });
                 } else if (state.filterPeriodo === 'semana') {
                     const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
-                    const diaDaSemana = hoje.getDay(); // 0 (Dom) - 6 (Sab)
+                    const diaDaSemana = hoje.getDay(); 
                     
                     const inicioSemana = new Date(hoje.getTime());
                     inicioSemana.setDate(hoje.getDate() - diaDaSemana);
-                    inicioSemana.setHours(0, 0, 0, 0); // Início do Domingo
+                    inicioSemana.setHours(0, 0, 0, 0); 
     
                     const fimSemana = new Date(inicioSemana.getTime());
                     fimSemana.setDate(inicioSemana.getDate() + 6);
-                    fimSemana.setHours(23, 59, 59, 999); // Fim do Sábado
+                    fimSemana.setHours(23, 59, 59, 999); 
     
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
                         if (!at.data) return false;
@@ -954,10 +1014,8 @@
                         return dataAt >= inicioSemana && dataAt <= fimSemana;
                     });
                 } 
-                // Se 'todos', nenhum filtro de data é aplicado
             }
 
-            // 2. Filtro de Cargo (Indireto)
             if (state.filterCargo !== 'todos') {
                 let funcionariosFiltradosPorCargo = [];
                 funcionariosFiltradosPorCargo = state.funcionarios
@@ -969,21 +1027,18 @@
                 );
             }
             
-            // 3. Filtro de Funcionário (Direto)
             if (state.filterFuncionario !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.funcionarioId === state.filterFuncionario
                 );
             }
             
-            // 4. Filtro de Cliente (Direto)
             if (state.filterCliente !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.clienteId === state.filterCliente
                 );
             }
 
-            // 5. Filtro de Tarefa (Direto, pelo Título)
             if (state.filterTarefa !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.titulo === state.filterTarefa
@@ -993,15 +1048,13 @@
             return atividadesFiltradas;
         }
         
-        // --- Nova Função Utilitária para Cores de Status ---
         function getStatusCardClasses(status) {
-            // Define os mapeamentos de cores (Tailwind)
             const statusMap = {
                 'Concluído': 'bg-green-100 text-green-800 hover:bg-green-200',
                 'Em Andamento': 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)] hover:bg-[var(--color-accent-light-hover)]',
-                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', // Laranja
+                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200',
                 'Bloqueado': 'bg-red-100 text-red-800 hover:bg-red-200',
-                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200' // Para status nulo ou indefinido
+                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200'
             };
             
             return statusMap[status] || statusMap['default'];
@@ -1074,7 +1127,7 @@
                 atividadesDoDia.forEach(at => {
                     const func = state.funcionarios.find(f => f.id === at.funcionarioId);
                     const cliente = state.clientes.find(c => c.id === at.clienteId);
-                    const statusClasses = getStatusCardClasses(at.status || 'Pendente'); // Pega as classes de cor
+                    const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                     
                     html += `
                         <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
@@ -1186,7 +1239,7 @@
 
                     cellAtividades.forEach(at => {
                         const cliente = state.clientes.find(c => c.id === at.clienteId);
-                        const statusClasses = getStatusCardClasses(at.status || 'Pendente'); // Pega as classes de cor
+                        const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                         
                         html += `
                             <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
@@ -1275,7 +1328,6 @@
             const statusLabels = Object.keys(statusCounts);
             const statusData = Object.values(statusCounts);
             
-            // Cores para o gráfico de pizza (Etapas)
             const statusColors = {
                 'Pendente': '#F97422', // Laranja
                 'Em Andamento': '#10B981', // Verde
@@ -1364,7 +1416,6 @@
                     </div>
                 </div>`;
 
-            // Configurações globais do Chart.js para a nova fonte
             const rootStyle = getComputedStyle(document.documentElement);
             Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
             Chart.defaults.font.size = 12;
@@ -1419,8 +1470,8 @@
                         datasets: [{
                             data: [percentagemConcluidas, percentagemRestante],
                             backgroundColor: [
-                                'var(--color-accent)', // Usa a cor do tema
-                                '#e5e7eb'  // Cinza
+                                'var(--color-accent)', 
+                                '#e5e7eb'  
                             ],
                             borderColor: '#E5E7EB', // Cinza claro
                             borderWidth: 2,
@@ -1447,7 +1498,6 @@
                 });
             }
         }
-
 
         function renderAdminFuncionarios() {
             let html = `<div class="flex justify-end mb-4">
@@ -1601,12 +1651,55 @@
             html += `</tbody></table></div>`;
             dom.adminContent.innerHTML = html;
         }
+        
+        // --- Nova Função: Renderizar Painel de Usuários ---
+        function renderAdminUsuarios() {
+            let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Nome</th>
+                            <th class="table-header">Email</th>
+                            <th class="table-header">Função (Role)</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+
+            if (state.usuarios.length === 0) {
+                html += `<tr><td colspan="3" class="px-6 py-4 text-center text-stone-500">Nenhum usuário encontrado.</td></tr>`;
+            }
+
+            state.usuarios.forEach(user => {
+                const isCurrentUser = (user.uid === state.currentUser.uid);
+                html += `
+                    <tr>
+                        <td class="table-cell font-medium text-stone-900">${user.nome}</td>
+                        <td class="table-cell">${user.email || 'N/A'}</td>
+                        <td class="table-cell">
+                            <select data-action="change-role" data-uid="${user.uid}" class="form-select text-sm" ${isCurrentUser ? 'disabled' : ''}>
+                                <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+                                <option value="editor" ${user.role === 'editor' ? 'selected' : ''}>Editor</option>
+                                <option value="leitor" ${user.role === 'leitor' ? 'selected' : ''}>Leitor</option>
+                            </select>
+                            ${isCurrentUser ? '<span class="text-xs text-stone-500 ml-2">(Você)</span>' : ''}
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.adminContent.innerHTML = html;
+        }
 
         // --- Modals ---
         function openModal(type, id = null) {
             // Apenas editores ou admins podem abrir o modal para adicionar/editar
             if (state.userRole === 'leitor') {
-                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+                showToast("Apenas 'leitores' não podem alterar dados.", 'error');
+                return;
+            }
+            // Apenas admin pode mexer em dados de admin (funcionários, cargos, etc.)
+            if (type !== 'atividade' && state.userRole !== 'admin') {
+                showToast("Apenas 'admins' podem alterar dados administrativos.", 'error');
                 return;
             }
 
@@ -1886,6 +1979,12 @@
             }
 
             try {
+                // Apenas 'admin' pode semear dados
+                if (state.userRole !== 'admin') {
+                    console.log("Apenas admins podem semear dados iniciais.");
+                    return;
+                }
+                
                 console.log("Adicionando dados iniciais (Cargos, Tarefas, Funcionários)...");
                 // 1. Adicionar CARGOS
                 const docRefDesigner = await addDoc(cargosCollection, { nome: "Designer" });
@@ -1921,11 +2020,10 @@
             --color-bg: #F4F7FA; 
             --color-bg-alt: #E9EEF3;
             --color-card: #FFFFFF;
-            /* Alterado de volta para Cor Padrão (Roxo/Azul) */
             --color-sidebar: var(--color-accent); 
-            --color-sidebar-text: #FFFFFF; /* Alterado para Branco */
-            --color-sidebar-text-hover: #FFFFFF; /* Alterado para Branco */
-            --color-sidebar-bg-hover: var(--color-accent-dark); /* Alterado para tom escuro */
+            --color-sidebar-text: #FFFFFF; 
+            --color-sidebar-text-hover: #FFFFFF; 
+            --color-sidebar-bg-hover: var(--color-accent-dark); 
             
             --color-text-primary: #1f2937;
             --color-text-secondary: #4b5563;
@@ -1969,14 +2067,14 @@
         .btn-link { @apply text-[var(--color-accent-dark)] hover:text-[var(--color-accent-darker)] font-medium transition-colors; }
         .btn-link-danger { @apply text-red-600 hover:text-red-800 font-medium transition-colors; }
 
-        /* Estilo Botões Menu Lateral (Fundo Padrão/Roxo) */
+        /* Estilo Botões Menu Lateral */
         .menu-btn { @apply flex items-center justify-start w-full px-3 py-3 rounded-md text-base font-medium text-[var(--color-sidebar-text)] hover:text-[var(--color-sidebar-text-hover)] hover:bg-[var(--color-sidebar-bg-hover)] transition-colors duration-150; }
-        .menu-btn-active { @apply bg-[var(--color-accent-dark)] text-white font-semibold hover:bg-[var(--color-accent-darker)] hover:text-white; } /* Texto branco e fundo escuro */
+        .menu-btn-active { @apply bg-[var(--color-accent-dark)] text-white font-semibold hover:bg-[var(--color-accent-darker)] hover:text-white; } 
 
-        /* Estilo Botões Sub-Navegação (Pautas, Admin) - ALTERADO */
+        /* Estilo Botões Sub-Navegação (Pautas, Admin) */
         .sub-nav-btn { @apply px-4 py-2 text-sm font-medium rounded-md transition-colors duration-150 shadow-sm; } 
         .sub-nav-btn-active { @apply bg-[var(--color-accent)] text-[var(--color-accent-text)] font-semibold shadow-sm; } /* Fundo na cor do tema */
-        .sub-nav-btn-inactive { @apply bg-white text-[var(--color-text-secondary)] border border-stone-200 hover:bg-stone-50; } /* Fundo branco com borda */
+        .sub-nav-btn-inactive { @apply bg-white text-[var(--color-text-secondary)] border border-stone-200 hover:bg-stone-50; } 
         
         .theme-swatch { @apply w-6 h-6 rounded-full border border-gray-300 cursor-pointer transition-all; }
         
@@ -1991,7 +2089,7 @@
             margin-right: 0;
         }
 
-        /* Adicionado para forçar o alinhamento do texto à esquerda */
+        /* Força o alinhamento do texto à esquerda */
         .sidebar-text {
             @apply text-left;
         }
@@ -2000,10 +2098,52 @@
 </head>
 <body class="bg-[var(--color-bg)] antialiased" style="font-family: var(--font-family);">
 
-    <!-- Ecrã de Erro para GitHub -->
-    <div id="config-error" class="hidden min-h-screen flex items-center justify-center bg-stone-100 p-8">
-        <div class="bg-white p-10 rounded-lg shadow-md max-w-lg w-full text-center">
-            <!-- Conteúdo injetado pelo showConfigError() -->
+    <!-- Ecrã de Login (Novo) -->
+    <div id="login-view" class="min-h-screen flex items-center justify-center bg-[var(--color-bg)] p-4">
+        <div class="max-w-md w-full bg-[var(--color-card)] p-8 rounded-lg shadow-xl">
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-[var(--color-accent-dark)]">
+                    <span class="font-normal">Gestão de</span> Pautas
+                </h1>
+                <p id="login-title" class="text-stone-600 mt-2">Aceder à Plataforma</p>
+            </div>
+            
+            <!-- Formulário de Login/Registo -->
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label for="login-email" class="block text-sm font-medium text-stone-700">Email</label>
+                    <input type="email" id="login-email" name="email" class="form-input" required>
+                </div>
+                <div>
+                    <label for="login-password" class="block text-sm font-medium text-stone-700">Senha</label>
+                    <input type="password" id="login-password" name="password" class="form-input" required>
+                </div>
+                
+                <p id="login-message" class="text-sm text-red-600 text-center"></p>
+                
+                <button id="login-email-btn" type="submit" class="btn-primary w-full justify-center">Entrar com Email</button>
+            </form>
+            
+            <div class="mt-6">
+                <div class="relative">
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="w-full border-t border-stone-300"></div>
+                    </div>
+                    <div class="relative flex justify-center text-sm">
+                        <span class="px-2 bg-[var(--color-card)] text-stone-500">ou</span>
+                    </div>
+                </div>
+                
+                <button id="login-google-btn" class="btn-secondary w-full justify-center mt-6 flex items-center">
+                    <svg class="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48px" height="48px"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"></path><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"></path><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.223,0-9.64-3.657-11.303-8H6.306C9.656,35.663,16.318,40,24,40z"></path><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.574l6.19,5.238C39.712,35.619,44,29.569,44,24C44,22.659,43.862,21.35,43.611,20.083z"></paath></svg>
+                    Entrar com Google
+                </button>
+            </div>
+            
+            <div class="text-sm text-center mt-6">
+                <button id="toggle-to-create" class="btn-link">Não tem uma conta? Crie uma</button>
+                <button id="toggle-to-login" class="btn-link hidden">Já tem uma conta? Entre</button>
+            </div>
         </div>
     </div>
 
@@ -2013,7 +2153,7 @@
         <nav id="sidebar-menu" class="fixed inset-y-0 left-0 bg-[var(--color-sidebar)] shadow-md w-64 p-4 z-30 transform -translate-x-full md:translate-x-0 transition-all duration-300 ease-in-out flex flex-col">
             <!-- Logo / Título -->
             <div id="sidebar-title" class="flex items-center justify-start px-3 py-4 mb-4"> <!-- Alinhado à esquerda e px-3 -->
-                <h1 class="text-2xl font-bold text-white"> <!-- Texto Branco -->
+                <h1 class="text-2xl font-bold text-white"> 
                     <span class="font-normal">Gestão de</span> Pautas
                 </h1>
             </div>
@@ -2050,7 +2190,7 @@
             <div class="mt-auto">
                 <button id="sidebar-toggle-button" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
-                    <!-- <span class="sidebar-text text-left">Minimizar</span> --> <!-- Texto removido -->
+                    <!-- Texto "Minimizar" removido -->
                 </button>
                 
                 <button id="btn-logout" class="menu-btn justify-start w-full">
@@ -2092,7 +2232,7 @@
                 <!-- VIEW: PAUTAS -->
                 <div id="main-view-pautas">
                     <div class="flex items-center justify-between mb-4">
-                        <div id="pautas-nav" class="flex flex-wrap gap-3"> <!-- Alterado para gap-3 -->
+                        <div id="pautas-nav" class="flex flex-wrap gap-3"> 
                             <button data-view="calendario" class="sub-nav-btn sub-nav-btn-active">Calendário</button>
                             <button data-view="semana" class="sub-nav-btn sub-nav-btn-inactive">Semana</button>
                             <button data-view="lista" class="sub-nav-btn sub-nav-btn-inactive">Lista Geral</button>
@@ -2146,11 +2286,12 @@
                 <!-- VIEW: ADMIN -->
                 <div id="main-view-admin" class="hidden">
                     <div class="flex items-center justify-between mb-4">
-                        <div id="admin-nav" class="flex flex-wrap gap-3"> <!-- Alterado para gap-3 -->
+                        <div id="admin-nav" class="flex flex-wrap gap-3"> 
                             <button data-view="funcionarios" class="sub-nav-btn sub-nav-btn-active">Funcionários</button>
                             <button data-view="cargos" class="sub-nav-btn sub-nav-btn-inactive">Cargos</button>
                             <button data-view="clientes" class="sub-nav-btn sub-nav-btn-inactive">Clientes</button>
                             <button data-view="tarefas" class="sub-nav-btn sub-nav-btn-inactive">Tarefas Padrão</button>
+                            <button data-view="usuarios" class="sub-nav-btn sub-nav-btn-inactive">Usuários</button>
                         </div>
                     </div>
                     <div id="admin-content">
