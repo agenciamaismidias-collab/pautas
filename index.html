@@ -1,6 +1,5 @@
 <!-- Chosen Palette: Warm Neutral (Tailwind Slate/Stone com Acento Azul) -->
-<!-- ... (O plano e visualização originais foram removidos para dar lugar à nova estrutura) -->
-<!-- CONFIRMATION: SVG icons are now used. -->
+<!-- Layout: Menu Lateral Fixo (WIP) -->
 <!DOCTYPE html>
 <html lang="pt-br" style="font-size: 15px; --font-family: 'Inter', sans-serif;">
 <head>
@@ -37,7 +36,8 @@
             collection,
             query,
             where,
-            getDocs
+            getDocs,
+            limit // Adicionado limit para seedInitialData
         } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
         
         // Importação do Firebase Storage
@@ -57,15 +57,15 @@
         // Configuração real do Firebase (fornecida pelo usuário)
         // Esta configuração funcionará no GitHub.
         const userFirebaseConfig = {
-          apiKey: "AIzaSyBZ76yd8RbRQVjbJ115QqL3oDztxedq0OY",
-          authDomain: "agmm-16a91.firebaseapp.com",
-          projectId: "agmm-16a91",
-          storageBucket: "agmm-16a91.firebasestorage.app",
-          messagingSenderId: "784096179999",
-          appId: "1:784096179999:web:239ebaf0547bd88e24622a",
-          measurementId: "G-B56XH56SLB"
+            apiKey: "AIzaSyBZ76yd8RbRQVjbJ115QqL3oDztxedq0OY",
+            authDomain: "agmm-16a91.firebaseapp.com",
+            projectId: "agmm-16a91",
+            storageBucket: "agmm-16a91.firebasestorage.app",
+            messagingSenderId: "784096179999",
+            appId: "1:784096179999:web:239ebaf0547bd88e24622a",
+            measurementId: "G-B56XH56SLB"
         };
-
+        
         // Usa a config do ambiente (pré-visualização) se disponível, senão, usa a config do usuário (GitHub)
         const firebaseConfig = firebaseConfigFromEnv || userFirebaseConfig;
         
@@ -76,12 +76,13 @@
         let analytics; // Adicionado analytics
 
         // --- Collections ---
-        let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection;
+        let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection, usuariosCollection;
         const cargosPath = `/artifacts/${appId}/public/data/cargos`;
         const funcionariosPath = `/artifacts/${appId}/public/data/funcionarios`;
         const atividadesPath = `/artifacts/${appId}/public/data/atividades`;
         const clientesPath = `/artifacts/${appId}/public/data/clientes`;
         const tarefasPadraoPath = `/artifacts/${appId}/public/data/tarefasPadrao`;
+        const usuariosPath = `/artifacts/${appId}/public/data/usuarios`; // Para funções (roles)
 
         // --- Estado Global da Aplicação ---
         const state = {
@@ -92,7 +93,7 @@
             tarefasPadrao: [],
             currentMainView: 'pautas', // 'pautas', 'dashboard' ou 'admin'
             currentPautasView: 'calendario', // 'calendario', 'semana' ou 'lista'
-            currentAdminView: 'funcionarios', // 'funcionarios' ou 'cargos' ou 'clientes' ou 'tarefas'
+            currentAdminView: 'funcionarios', // 'funcionarios', 'cargos', 'clientes' ou 'tarefas'
             currentDate: new Date(),
             editingId: null,
             editingCollection: null,
@@ -104,7 +105,12 @@
             isAuthReady: false,
             dashboardChart: null, 
             dashboardDoughnutChart: null,
-            isSidebarMinimized: false, // Estado do menu
+            isSidebarMinimized: false,
+            themeColor: '#648AAE', // Padrão Azul Sereno
+            
+            // Estado de Autenticação
+            currentUser: null,
+            userRole: null, // 'admin', 'editor', 'leitor'
         };
 
         // --- DOM Elements ---
@@ -114,23 +120,21 @@
         document.addEventListener('DOMContentLoaded', () => {
             cacheDOMElements();
             setupUIEventListeners();
-            loadStateFromLocalStorage(); // Adicionado para carregar filtros e abas
+            loadStateFromLocalStorage(); // Carrega filtros e abas
             initFirebase();
             applyThemeFromLocalStorage(); // Aplica tema salvo
-            applySidebarStateFromLocalStorage(); // Aplica estado do menu
         });
 
         function cacheDOMElements() {
-            dom.appView = document.getElementById('app-view'); // Wrapper da App
-
+            // Views Principais
+            dom.appView = document.getElementById('app-view');
             dom.mainViewPautas = document.getElementById('main-view-pautas');
             dom.mainViewDashboard = document.getElementById('main-view-dashboard');
             dom.mainViewAdmin = document.getElementById('main-view-admin');
             
-            // Novo Menu Lateral
+            // Menu Lateral
             dom.sidebarMenu = document.getElementById('sidebar-menu');
             dom.sidebarTitle = document.getElementById('sidebar-title');
-            dom.mobileMenuButton = document.getElementById('mobile-menu-button');
             dom.sidebarToggleButton = document.getElementById('sidebar-toggle-button');
             dom.mainContentWrapper = document.getElementById('main-content-wrapper');
 
@@ -139,14 +143,17 @@
             dom.menuAdmin = document.getElementById('menu-admin');
             dom.menuTema = document.getElementById('menu-tema');
             dom.btnLancarAtividadeMenu = document.getElementById('btn-lancar-atividade-menu');
-            dom.btnLogout = document.getElementById('btn-logout'); // Botão Sair
 
+            // Conteúdo
             dom.pautasContent = document.getElementById('pautas-content');
             dom.dashboardContent = document.getElementById('dashboard-content');
             dom.adminContent = document.getElementById('admin-content');
             dom.pautasNav = document.getElementById('pautas-nav');
             dom.adminNav = document.getElementById('admin-nav');
             
+            // Botão Sair
+            dom.btnLogout = document.getElementById('btn-logout');
+
             // Modals
             dom.modal = document.getElementById('modal');
             dom.modalTitle = document.getElementById('modal-title');
@@ -164,7 +171,7 @@
             dom.toastMessage = document.getElementById('toast-message');
 
             dom.userIdDisplay = document.getElementById('user-id-display');
-            dom.userIdDisplayWrapper = document.getElementById('user-id-wrapper');
+            dom.userIdDisplayWrapper = document.getElementById('user-id-wrapper'); 
             
             // Filtros
             dom.filterPeriodo = document.getElementById('filter-periodo');
@@ -173,7 +180,7 @@
             dom.filterCliente = document.getElementById('filter-cliente');
             dom.filterTarefa = document.getElementById('filter-tarefa'); 
             
-            // Novo Modal de Tema
+            // Modal de Tema
             dom.themeModal = document.getElementById('theme-modal');
             dom.themeModalClose = document.getElementById('theme-modal-close');
             dom.themeQuickSereno = document.getElementById('theme-quick-sereno');
@@ -231,6 +238,21 @@
         }
 
         async function initFirebase() {
+            
+            // --- NOVO: Temporizador de Segurança ---
+            // Se a autenticação (anônima ou token) não funcionar em 5 segundos,
+            // força a exibição de um erro em vez de um ecrã branco.
+            setTimeout(() => {
+                if (!state.isAuthReady) {
+                    console.error("Firebase auth timeout. Forcing error message.");
+                    showConfigError(
+                        "Falha na Ligação",
+                        "A aplicação não conseguiu ligar-se ao Firebase. Isto pode dever-se a: \n1. Falha de rede. \n2. O 'Sign-in anônimo' (Anonymous sign-in) estar desativado no painel do Firebase (Authentication -> Sign-in method)."
+                    );
+                }
+            }, 5000); // 5 segundos de timeout
+            // --- FIM DO NOVO ---
+            
             try {
                 // VERIFICAÇÃO DE CONFIG (REMOVIDA - Config real foi adicionada)
                 
@@ -246,18 +268,25 @@
                 atividadesCollection = collection(db, atividadesPath);
                 clientesCollection = collection(db, clientesPath);
                 tarefasPadraoCollection = collection(db, tarefasPadraoPath);
+                usuariosCollection = collection(db, usuariosPath);
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
-                        // Usuário logado (anônimo ou real)
                         userId = user.uid;
-                        dom.userIdDisplay.textContent = `User ID: ${userId.substring(0, 8)}...`; // Simples
+                        state.currentUser = user;
+                        
+                        // Define perfil de usuário (cria se não existir)
+                        await checkUserRole(user); 
+                        
+                        dom.userIdDisplay.textContent = `ID: ${userId.substring(0, 8)}...`; 
                         state.isAuthReady = true;
                         
-                        // Mostra a App
+                        // Esconde erro (se houver) e mostra app
+                        dom.configError.classList.add('hidden');
                         dom.appView.classList.remove('hidden');
 
                         await seedInitialData(); 
+                        
                         setupFirestoreListeners();
                         render();
                     } else {
@@ -301,8 +330,64 @@
             }
         }
         
+        async function checkUserRole(user) {
+            const userDocRef = doc(db, usuariosPath, user.uid);
+            const userDoc = await getDoc(userDocRef);
+            
+            if (userDoc.exists()) {
+                state.userRole = userDoc.data().role;
+            } else {
+                // Novo usuário
+                // Verifica se é o primeiro admin
+                const adminQuery = query(usuariosCollection, where('role', '==', 'admin'));
+                const adminSnapshot = await getDocs(adminQuery);
+                
+                let newRole;
+                let userEmail = user.email;
+                let userName;
+
+                if (user.isAnonymous) {
+                    newRole = 'leitor'; // Visitantes são sempre 'leitor'
+                    userEmail = null;
+                    userName = 'Visitante';
+                } else {
+                    newRole = adminSnapshot.empty ? 'admin' : 'leitor'; // Primeiro usuário = admin
+                    userEmail = user.email; // Mantém null se for o caso
+                    
+                    // --- CORREÇÃO ---
+                    // Trata o caso de tokens customizados (preview) que não têm email nem nome
+                    if (user.displayName) {
+                        userName = user.displayName;
+                    } else if (user.email) {
+                        userName = user.email.split('@')[0];
+                    } else {
+                        userName = "Usuário"; // Nome padrão para token customizado sem dados
+                    }
+                    // --- FIM DA CORREÇÃO ---
+                }
+                
+                const newUserProfile = {
+                    email: userEmail,
+                    nome: userName,
+                    role: newRole,
+                    uid: user.uid,
+                    photoURL: user.photoURL || `https://placehold.co/100x100/${shadeColor(state.themeColor || '#648AAE', 70).substring(1)}/${shadeColor(state.themeColor || '#648AAE', -20).substring(1)}?text=${userName[0].toUpperCase()}`
+                };
+                
+                await setDoc(userDocRef, newUserProfile);
+                state.userRole = newRole;
+            }
+            console.log(`Usuário ${user.email || user.uid} logado com função: ${state.userRole}`);
+        }
+
         function setupFirestoreListeners() {
             if (!state.isAuthReady) return;
+
+            // Permissões: Apenas 'leitor' e acima podem ler
+            if (!state.userRole) {
+                 console.warn("Usuário sem função, não é possível ler dados.");
+                 return;
+            }
 
             onSnapshot(query(cargosCollection), (snapshot) => {
                 state.cargos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -336,22 +421,13 @@
 
         // --- Event Handlers ---
         function setupUIEventListeners() {
-            // Nova Navegação
-            dom.mobileMenuButton.addEventListener('click', () => {
-                // Alterna a visibilidade do menu no mobile
-                dom.sidebarMenu.classList.toggle('-translate-x-full');
-            });
-            dom.sidebarToggleButton.addEventListener('click', toggleSidebar);
-            
+            // Navegação
             dom.menuPautas.addEventListener('click', () => switchMainView('pautas'));
             dom.menuDashboard.addEventListener('click', () => switchMainView('dashboard'));
             dom.menuAdmin.addEventListener('click', () => switchMainView('admin'));
             dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
             dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
-            dom.btnLogout.addEventListener('click', () => {
-                 // O signOut() real não funciona bem com login anônimo ou token
-                 showToast("Função Sair não aplicável no modo de pré-visualização.", "error");
-            });
+            dom.btnLogout.addEventListener('click', () => auth.signOut()); // Sair
 
             // Navegação Secundária (Delegação)
             dom.pautasNav.addEventListener('click', (e) => {
@@ -382,7 +458,7 @@
             dom.btnCancelDelete.addEventListener('click', () => dom.confirmDeleteModal.classList.add('hidden'));
             dom.btnConfirmDelete.addEventListener('click', handleConfirmDelete);
             
-            // Novo Modal de Tema
+            // Modal de Tema
             dom.themeModalClose.addEventListener('click', () => dom.themeModal.classList.add('hidden'));
             dom.themeQuickSereno.addEventListener('click', () => applyTheme('sereno'));
             dom.themeQuickSolar.addEventListener('click', () => applyTheme('solar'));
@@ -394,9 +470,18 @@
             dom.themeFontSelect.addEventListener('change', (e) => applyTheme(null, e.target.value));
             dom.themeFontSizeDecrease.addEventListener('click', () => adjustFontSize(-1));
             dom.themeFontSizeIncrease.addEventListener('click', () => adjustFontSize(1));
+            
+            // Menu Lateral
+            dom.sidebarToggleButton.addEventListener('click', toggleSidebar);
         }
 
         function handleAdminContentClick(e) {
+            // Verifica permissão
+            if (state.userRole === 'leitor') {
+                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+                return;
+            }
+
             const btn = e.target.closest('button');
             if (!btn) return;
             
@@ -413,18 +498,28 @@
         }
         
         function handlePautasContentClick(e) {
-            // Permite clicar no dia (calendário) ou em botões
             const target = e.target.closest('[data-action]');
             if (!target) return;
             
             const action = target.dataset.action;
             const id = target.dataset.id;
             
-            if (action === 'edit') {
-                openModal('atividade', id);
-            } else if (action === 'delete') {
-                openDeleteModal(id, 'atividade');
-            } else if (action === 'prev-month') {
+            if (action === 'edit' || action === 'delete') {
+                // Verifica permissão
+                if (state.userRole === 'leitor') {
+                    showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+                    return;
+                }
+                
+                if (action === 'edit') {
+                    openModal('atividade', id);
+                } else if (action === 'delete') {
+                    openDeleteModal(id, 'atividade');
+                }
+            }
+            
+            // Navegação (permitida para todos)
+            if (action === 'prev-month') {
                 state.currentDate.setMonth(state.currentDate.getMonth() - 1);
                 renderPautas();
             } else if (action === 'next-month') {
@@ -485,51 +580,54 @@
                 applyTheme('custom', null, newHex);
             }
         }
-
-        /* getLuminance está no topo */
-
+        
         function applyTheme(themeName, font, customColor) {
             const root = document.documentElement;
             
             // 1. Aplicar Paleta de Cores
             if (themeName) {
                 root.classList.remove('theme-solar', 'theme-laranja', 'theme-custom');
-                if (themeName === 'solar' || themeName === 'laranja') {
-                    root.classList.add(`theme-${themeName}`);
+                let accentColor;
+
+                if (themeName === 'solar') {
+                    accentColor = '#FFC82E';
+                    root.classList.add('theme-solar');
+                } else if (themeName === 'laranja') {
+                    accentColor = '#F97422';
+                    root.classList.add('theme-laranja');
                 } else if (themeName === 'sereno') {
-                    // Sereno é o padrão, sem classe
+                    accentColor = '#648AAE';
                 } else if (themeName === 'custom' && customColor) {
+                    accentColor = customColor;
                     root.classList.add('theme-custom');
+                } else {
+                    accentColor = state.themeColor; // Manter a cor atual se themeName for nulo
                 }
                 
-                let accentColor;
-                if(themeName === 'solar') accentColor = '#FFC82E';
-                else if(themeName === 'laranja') accentColor = '#F97422';
-                else if(themeName === 'sereno') accentColor = '#648AAE';
-                else accentColor = customColor;
-
                 if (accentColor) {
+                    state.themeColor = accentColor; // Armazena a cor principal no estado
                     root.style.setProperty('--color-accent', accentColor);
                     
-                    // Gera tons mais claros/escuros
+                    // Deriva cores mais escuras
                     const darkColor = shadeColor(accentColor, -20);
-                    const darkerColor = shadeColor(accentColor, -40);
-                    const lightColor = shadeColor(accentColor, 90);
-                    const lighterColor = shadeColor(accentColor, 70);
-
+                    const darkerColor = shadeColor(accentColor, -30);
                     root.style.setProperty('--color-accent-dark', darkColor);
                     root.style.setProperty('--color-accent-darker', darkerColor);
+
+                    // Deriva cores claras
+                    const lightColor = shadeColor(accentColor, 70);
+                    const lighterColor = shadeColor(accentColor, 85);
                     root.style.setProperty('--color-accent-light', lightColor);
                     root.style.setProperty('--color-accent-light-hover', lighterColor);
 
-
+                    // Decide a cor do texto (preto ou branco)
                     const luminance = getLuminance(accentColor);
-                    const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF'; // Preto ou Branco
+                    const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF'; 
                     root.style.setProperty('--color-accent-text', textColor);
                     
                     // Atualiza os inputs do modal
-                    if(dom.themeColorPicker) dom.themeColorPicker.value = accentColor;
-                    if(dom.themeHexInput) dom.themeHexInput.value = accentColor;
+                    dom.themeColorPicker.value = accentColor;
+                    dom.themeHexInput.value = accentColor;
                 }
                 
                 localStorage.setItem('sgap_theme_name', themeName);
@@ -548,14 +646,13 @@
                 const newFontFamily = fontMap[font] || "'Inter', sans-serif";
                 root.style.setProperty('--font-family', newFontFamily);
                 localStorage.setItem('sgap_theme_font', font);
-                if(dom.themeFontSelect) dom.themeFontSelect.value = font;
+                dom.themeFontSelect.value = font;
             }
 
-            // Força a re-renderização dos gráficos para pegar novas cores (com um pequeno atraso)
-            setTimeout(renderDashboard, 50); 
+            // Força a re-renderização dos gráficos para pegar novas cores
+            // (Chamado dentro do render() principal)
+            if(state.isAuthReady) renderDashboard();
         }
-        
-        /* shadeColor está no topo */
 
         function adjustFontSize(delta) {
             const root = document.documentElement;
@@ -618,8 +715,12 @@
             const savedTarefa = localStorage.getItem('sgap_filterTarefa');
             if (savedTarefa) state.filterTarefa = savedTarefa;
             
+            // Carregar Menu Lateral
+            const savedSidebarState = localStorage.getItem('sgap_sidebarMinimized');
+            state.isSidebarMinimized = (savedSidebarState === 'true');
+            applySidebarState();
+            
             // Aplicar estado da navegação (botões)
-            // Isto garante que os botões corretos estão ativos ANTES da primeira renderização
             if (dom.menuPautas) dom.menuPautas.classList.toggle('menu-btn-active', state.currentMainView === 'pautas');
             if (dom.menuDashboard) dom.menuDashboard.classList.toggle('menu-btn-active', state.currentMainView === 'dashboard');
             if (dom.menuAdmin) dom.menuAdmin.classList.toggle('menu-btn-active', state.currentMainView === 'admin');
@@ -641,12 +742,7 @@
         // --- Funções do Menu Lateral ---
         function toggleSidebar() {
             state.isSidebarMinimized = !state.isSidebarMinimized;
-            localStorage.setItem('sgap_sidebar_minimized', state.isSidebarMinimized ? 'true' : 'false');
-            applySidebarState();
-        }
-        
-        function applySidebarStateFromLocalStorage() {
-            state.isSidebarMinimized = localStorage.getItem('sgap_sidebar_minimized') === 'true';
+            localStorage.setItem('sgap_sidebarMinimized', state.isSidebarMinimized);
             applySidebarState();
         }
         
@@ -677,15 +773,14 @@
                 icon.classList.toggle('hidden', !isMinimized);
             });
             
-            title.classList.toggle('hidden', isMinimized);
+            if(title) title.classList.toggle('hidden', isMinimized);
 
             // Centraliza ícones
-            dom.sidebarMenu.querySelectorAll('.menu-btn').forEach(btn => {
+            menu.querySelectorAll('.menu-btn').forEach(btn => {
                 btn.classList.toggle('justify-center', isMinimized);
                 btn.classList.toggle('justify-start', !isMinimized);
             });
             
-            // Adicionado: Centraliza também o wrapper do User ID
             if (dom.userIdDisplayWrapper) {
                 dom.userIdDisplayWrapper.classList.toggle('justify-center', isMinimized);
                 dom.userIdDisplayWrapper.classList.toggle('justify-start', !isMinimized);
@@ -694,7 +789,6 @@
             // Atualiza o botão de toggle
             if (toggleBtn) {
                 const icon = toggleBtn.querySelector('svg');
-                // Removida a lógica do 'text.textContent'
                 if (isMinimized) {
                     icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
                 } else {
@@ -711,20 +805,11 @@
             dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
             dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
             dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
-            
-            // Desativa botões que não são "views"
-            dom.menuTema.classList.remove('menu-btn-active');
-            dom.btnLancarAtividadeMenu.classList.remove('menu-btn-active');
 
             // Exibe a view correta
             dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
             dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
             dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
-            
-            // Fecha menu mobile ao navegar
-            if (window.innerWidth < 768) {
-                dom.sidebarMenu.classList.add('-translate-x-full');
-            }
             
             render();
             localStorage.setItem('sgap_currentMainView', view); // Salvar
@@ -756,16 +841,29 @@
         function render() {
             if (!state.isAuthReady) return;
 
-            // Renderiza os filtros primeiro, pois eles são independentes
             renderFiltros(); 
 
-            // Renderiza a view principal ativa
             if (state.currentMainView === 'pautas') {
                 renderPautas();
             } else if (state.currentMainView === 'dashboard') {
                 renderDashboard();
             } else if (state.currentMainView === 'admin') {
                 renderAdmin();
+            }
+            
+            // Atualiza visibilidade de elementos com base na função
+            updateUIVisibility();
+        }
+        
+        function updateUIVisibility() {
+            // Botão "Lançar Atividade" e Menu "Administrativo"
+            const canEdit = (state.userRole === 'admin' || state.userRole === 'editor');
+            if(dom.btnLancarAtividadeMenu) dom.btnLancarAtividadeMenu.classList.toggle('hidden', !canEdit);
+            if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !canEdit);
+            
+            // Se o usuário é 'leitor' e estava na view 'admin', redireciona
+            if(state.userRole === 'leitor' && state.currentMainView === 'admin') {
+                switchMainView('pautas');
             }
         }
         
@@ -787,7 +885,7 @@
         function renderFiltros() {
             if (!dom.filterFuncionario) return; 
 
-            // Alterado: Ler do 'state' (que foi carregado do localStorage)
+            // Ler do 'state' (que foi carregado do localStorage)
             const selPeriodo = state.filterPeriodo;
             const selFunc = state.filterFuncionario;
             const selCargo = state.filterCargo;
@@ -814,24 +912,23 @@
             
             let tarefaOptions = '<option value="todos">Todas Tarefas</option>';
             state.tarefasPadrao.forEach(t => {
-                // Filtra pelo nome, pois é isso que é salvo no título da atividade
                 tarefaOptions += `<option value="${t.nome}">${t.nome}</option>`;
             });
             dom.filterTarefa.innerHTML = tarefaOptions;
 
             // Restaurar seleção a partir do 'state'
-            dom.filterPeriodo.value = selPeriodo;
-            dom.filterFuncionario.value = selFunc;
-            dom.filterCargo.value = selCargo;
-            dom.filterCliente.value = selCliente;
-            dom.filterTarefa.value = selTarefa;
+            if(dom.filterPeriodo) dom.filterPeriodo.value = selPeriodo;
+            if(dom.filterFuncionario) dom.filterFuncionario.value = selFunc;
+            if(dom.filterCargo) dom.filterCargo.value = selCargo;
+            if(dom.filterCliente) dom.filterCliente.value = selCliente;
+            if(dom.filterTarefa) dom.filterTarefa.value = selTarefa;
         }
 
         function getFilteredAtividades() {
             let agora = new Date(); 
             let atividadesFiltradas = state.atividades;
         
-            // 1. Filtro de Período (APENAS PARA VIEW 'LISTA' e 'DASHBOARD')
+            // 1. Filtro de Período (APENAS PARA VIEW 'LISTA' ou 'DASHBOARD')
             if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard') {
                 if (state.filterPeriodo === 'hoje') {
                     const hojeStr = agora.toISOString().split('T')[0];
@@ -853,7 +950,6 @@
     
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
                         if (!at.data) return false;
-                        // Adiciona T12:00:00 para evitar problemas de fuso horário
                         const dataAt = new Date(at.data + 'T12:00:00'); 
                         return dataAt >= inicioSemana && dataAt <= fimSemana;
                     });
@@ -888,7 +984,6 @@
             }
 
             // 5. Filtro de Tarefa (Direto, pelo Título)
-            // Isso funciona porque a "Tarefa Padrão" preenche o campo "título"
             if (state.filterTarefa !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.titulo === state.filterTarefa
@@ -904,7 +999,7 @@
             const statusMap = {
                 'Concluído': 'bg-green-100 text-green-800 hover:bg-green-200',
                 'Em Andamento': 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)] hover:bg-[var(--color-accent-light-hover)]',
-                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', // Laranja (Festa do Oli)
+                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', // Laranja
                 'Bloqueado': 'bg-red-100 text-red-800 hover:bg-red-200',
                 'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200' // Para status nulo ou indefinido
             };
@@ -931,9 +1026,7 @@
             
             const monthName = state.currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
-            // Filtra atividades por (func, cargo, cliente, tarefa)
             const atividadesFiltradas = getFilteredAtividades();
-            // Filtra manualmente pelo mês visível
             const atividadesDoMes = atividadesFiltradas.filter(at => {
                 if (!at.data) return false;
                 const dataAt = new Date(at.data + 'T12:00:00');
@@ -960,20 +1053,17 @@
             
             html += `<div class="grid grid-cols-7 gap-1 mt-1">`;
             
-            // Dias em branco
             for (let i = 0; i < firstDay; i++) {
                 html += `<div class="border rounded-md bg-stone-50 min-h-[100px]"></div>`;
             }
             
-            // Dias do mês
             for (let day = 1; day <= daysInMonth; day++) {
                 const diaAtual = new Date(year, month, day);
                 const hoje = new Date();
                 const isHoje = diaAtual.toDateString() === hoje.toDateString();
                 
-                // Filtra atividades *deste dia*
                 const atividadesDoDia = atividadesDoMes.filter(at => {
-                    const dataAt = new Date(at.data + 'T12:00:00'); // Tratar data como local
+                    const dataAt = new Date(at.data + 'T12:00:00');
                     return dataAt.getDate() === day;
                 });
                 
@@ -1003,13 +1093,12 @@
         }
 
         function renderSemana() {
-            // 1. Calcular datas da semana (Eixo X)
             const diasSemanaLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
             const diasDaSemanaArray = [];
             const hoje = new Date();
             const hojeKey = hoje.toISOString().split('T')[0];
 
-            const diaDaSemanaAtual = state.currentDate.getDay(); // 0 (Dom) - 6 (Sab)
+            const diaDaSemanaAtual = state.currentDate.getDay(); 
             const inicioSemana = new Date(state.currentDate.getFullYear(), state.currentDate.getMonth(), state.currentDate.getDate() - diaDaSemanaAtual);
             inicioSemana.setHours(0, 0, 0, 0);
 
@@ -1032,7 +1121,6 @@
                 });
             }
 
-            // 2. Filtrar atividades
             const atividadesFiltradas = getFilteredAtividades(); 
             const atividadesDaSemana = atividadesFiltradas.filter(at => {
                 if (!at.data) return false;
@@ -1040,22 +1128,14 @@
                 return dataAt >= inicioSemana && dataAt <= fimSemana;
             });
 
-            // 3. Determinar Funcionários para exibir (Eixo Y)
             let funcionariosParaExibir = [...state.funcionarios];
-
-            // Aplica filtro de Cargo
             if (state.filterCargo !== 'todos') {
                 funcionariosParaExibir = funcionariosParaExibir.filter(f => f.cargoId === state.filterCargo);
             }
-            
-            // Aplica filtro de Funcionário
             if (state.filterFuncionario !== 'todos') {
                 funcionariosParaExibir = funcionariosParaExibir.filter(f => f.id === state.filterFuncionario);
             }
             
-            // A lista de funcionários já está ordenada por nome pelo listener onSnapshot
-
-            // 4. Renderizar HTML
             const formatOptions = { day: 'numeric', month: 'short' };
             const inicioStr = inicioSemana.toLocaleDateString('pt-BR', formatOptions);
             const fimStr = fimSemana.toLocaleDateString('pt-BR', formatOptions);
@@ -1073,13 +1153,9 @@
                 </button>
             </div>`;
 
-            // Grelha
             html += `<div class="overflow-x-auto">`;
-            // Definimos uma largura mínima para a grelha para garantir que o overflow funcione
             html += `<div class="grid min-w-[1200px]" style="grid-template-columns: 180px repeat(7, minmax(140px, 1fr));">`;
             
-            // --- Cabeçalho (Eixo X) ---
-            // Adicionado 'left-0' e 'z-20' para fixar o canto superior esquerdo
             html += `<div class="p-2 font-bold bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 left-0 z-20">Funcionário</div>`;
             diasDaSemanaArray.forEach(dia => {
                 html += `<div class="p-2 font-bold text-center ${dia.isHoje ? 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)]' : 'bg-[var(--color-bg-alt)]'} border-b border-r border-stone-200 sticky top-0 z-10">
@@ -1088,7 +1164,6 @@
                 </div>`;
             });
 
-            // --- Linhas de Dados (Eixo Y e Células) ---
             if (funcionariosParaExibir.length === 0) {
                  html += `<div class="col-span-8 p-10 text-center text-stone-500">
                     Nenhum funcionário encontrado para os filtros selecionados.
@@ -1096,14 +1171,11 @@
             }
 
             funcionariosParaExibir.forEach(func => {
-                // Eixo Y (Cabeçalho da Linha)
-                // Adicionado 'bg-white' e 'z-10' para garantir que fica por cima e opaco
                 html += `<div class="p-2 border-b border-r border-stone-200 sticky left-0 bg-[var(--color-card)] z-10 flex flex-col items-center justify-center">
                     <img src="${func.fotoUrl || 'https://placehold.co/60x60/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-12 h-12 rounded-full object-cover mb-1">
                     <span class="text-sm font-medium text-center truncate w-full">${func.nome}</span>
                 </div>`;
                 
-                // Células de Dados
                 diasDaSemanaArray.forEach(dia => {
                     const cellAtividades = atividadesDaSemana.filter(at => 
                         at.funcionarioId === func.id && at.data === dia.key
@@ -1124,17 +1196,16 @@
                             </div>`;
                     });
 
-                    html += `</div></div>`; // Fim da célula
+                    html += `</div></div>`;
                 });
             });
 
-            html += `</div></div></div>`; // Fim da grelha, overflow e container
+            html += `</div></div></div>`; 
             
             dom.pautasContent.innerHTML = html;
         }
 
         function renderLista() {
-            // A "lista" respeita o filtro de período (hoje, semana, todos)
             const atividades = getFilteredAtividades();
             let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
                 <table class="min-w-full divide-y divide-stone-200">
@@ -1155,7 +1226,6 @@
                 html += `<tr><td colspan="7" class="px-6 py-4 text-center text-stone-500">Nenhuma atividade encontrada para os filtros selecionados.</td></tr>`;
             }
 
-            // Ordenar por data
             atividades.sort((a, b) => new Date(a.data) - new Date(b.data));
 
             atividades.forEach(at => {
@@ -1185,15 +1255,13 @@
         // --- Fim das Funções de Pautas ---
 
         function renderDashboard() {
-            if (!dom.dashboardContent) return;
+            if (!dom.dashboardContent || state.currentMainView !== 'dashboard') return;
 
-            // 1. Processar dados
-            const atividades = getFilteredAtividades(); // Usa atividades filtradas
+            const atividades = getFilteredAtividades(); 
             const totalAtividades = atividades.length;
 
-            // --- Dados para Gráfico 1: Status Geral (Pie Chart) ---
             const statusCounts = { 'Pendente': 0, 'Em Andamento': 0, 'Concluído': 0, 'Bloqueado': 0 };
-            let totalConcluidas = 0; // Para o novo gráfico
+            let totalConcluidas = 0; 
             
             atividades.forEach(at => {
                 const status = at.status || 'Pendente';
@@ -1215,19 +1283,15 @@
                 'Bloqueado': '#EF4444'   // Vermelho
             };
             
-            // --- Dados para Gráfico 2: Pauta Geral (Progresso) ---
             const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
             const percentagemRestante = 100 - percentagemConcluidas;
 
-            // --- Dados para Gráfico 3: Progresso por Tarefa (Círculos) ---
             const tarefaProgress = [];
-            // Itera sobre as tarefas padrão cadastradas
             state.tarefasPadrao.forEach(tarefa => {
                 const taskName = tarefa.nome;
                 let totalParaTarefa = 0;
                 let concluidasParaTarefa = 0;
 
-                // Filtra as atividades (já filtradas globalmente) para esta tarefa
                 atividades.forEach(at => {
                     if (at.titulo === taskName) {
                         totalParaTarefa++;
@@ -1248,7 +1312,6 @@
             });
 
 
-            // 2. Renderizar HTML dos containers
             dom.dashboardContent.innerHTML = `
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <!-- Gráfico 1 e 2: Status Geral e Pauta Geral -->
@@ -1256,10 +1319,8 @@
                         <h2 class="text-xl font-semibold mb-4 text-stone-700">Status Geral das Atividades</h2>
                         <p class="mb-4 text-stone-600">Total de atividades (com filtros): <strong>${totalAtividades}</strong></p>
                         
-                        <!-- Container para os dois gráficos -->
                         <div class="flex flex-col md:flex-row justify-around items-center gap-6">
                             
-                            <!-- Gráfico 1: Status por Etapa (Pie) -->
                             <div class="max-w-xs w-full"> 
                                 <h3 class="text-center font-medium text-stone-600 mb-2">Por Etapa</h3>
                                 <div class="relative max-w-[280px] mx-auto">
@@ -1267,12 +1328,10 @@
                                 </div>
                             </div>
                             
-                            <!-- Gráfico 2: Pauta Geral (Doughnut) -->
                             <div class="max-w-xs w-full">
                                 <h3 class="text-center font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
                                 <div class="relative max-w-[200px] mx-auto">
                                     <canvas id="pautaDoughnutChart"></canvas>
-                                    <!-- Texto de Percentagem no Meio -->
                                     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                                         <span class="text-3xl font-bold text-[var(--color-accent-dark)]">${Math.round(percentagemConcluidas)}%</span>
                                     </div>
@@ -1287,7 +1346,6 @@
                         <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
                         <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-96 pr-2">
                             ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
-                                // O gradiente cônico cria o efeito de círculo de progresso
                                 const gradient = `conic-gradient(var(--color-accent) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
                                 
                                 return `
@@ -1306,14 +1364,13 @@
                     </div>
                 </div>`;
 
-            // 3. Criar ou atualizar Gráfico 1 (Pie - Etapas)
             // Configurações globais do Chart.js para a nova fonte
             const rootStyle = getComputedStyle(document.documentElement);
-            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family').trim() || "'Inter', sans-serif";
+            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
             Chart.defaults.font.size = 12;
 
             const ctxPie = document.getElementById('statusPieChart')?.getContext('2d');
-            if (state.dashboardChart) state.dashboardChart.destroy(); // Destroi o gráfico 1
+            if (state.dashboardChart) state.dashboardChart.destroy(); 
             
             if (ctxPie) {
                 state.dashboardChart = new Chart(ctxPie, {
@@ -1351,7 +1408,6 @@
                 });
             }
 
-            // 4. Criar ou atualizar Gráfico 2 (Doughnut - Pauta Geral)
             const ctxDoughnut = document.getElementById('pautaDoughnutChart')?.getContext('2d');
             if (state.dashboardDoughnutChart) state.dashboardDoughnutChart.destroy(); 
             
@@ -1366,14 +1422,14 @@
                                 'var(--color-accent)', // Usa a cor do tema
                                 '#e5e7eb'  // Cinza
                             ],
-                            borderColor: '#E5E7EB', // Alterado para cinza claro
+                            borderColor: '#E5E7EB', // Cinza claro
                             borderWidth: 2,
                             hoverBorderWidth: 4
                         }]
                     },
                     options: {
                         responsive: true,
-                        cutout: '75%', // Define a espessura do "anel"
+                        cutout: '75%', 
                         plugins: {
                             legend: { display: false },
                             tooltip: { 
@@ -1396,7 +1452,6 @@
         function renderAdminFuncionarios() {
             let html = `<div class="flex justify-end mb-4">
                 <button data-action="add" class="btn-primary">
-                    <!-- Ícone removido -->
                     Adicionar Funcionário
                 </button>
             </div>`;
@@ -1427,7 +1482,7 @@
                             <img src="${func.fotoUrl || 'https://placehold.co/40x40/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-10 h-10 rounded-full object-cover">
                         </td>
                         <td class="table-cell">${func.email || 'N/A'}</td>
-                        <td class="table-cell">${cargo ? cargo.nome : 'N/A'}</td>
+                        <td class="table-cell">${cargo ? cargo.nome : 'Sem cargo'}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <button data-action="edit" data-id="${func.id}" class="btn-link">Editar</button>
                             <button data-action="delete" data-id="${func.id}" class="btn-link-danger">Excluir</button>
@@ -1441,7 +1496,9 @@
 
         function renderAdminCargos() {
             let html = `<div class="flex justify-end mb-4">
-                <button data-action="add" class="btn-primary">Adicionar Cargo</button>
+                <button data-action="add" class="btn-primary">
+                    Adicionar Cargo
+                </button>
             </div>`;
             
             html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
@@ -1475,7 +1532,9 @@
         
         function renderAdminClientes() {
             let html = `<div class="flex justify-end mb-4">
-                <button data-action="add" class="btn-primary">Adicionar Cliente</button>
+                <button data-action="add" class="btn-primary">
+                    Adicionar Cliente
+                </button>
             </div>`;
             
             html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
@@ -1509,7 +1568,9 @@
 
         function renderAdminTarefas() {
             let html = `<div class="flex justify-end mb-4">
-                <button data-action="add" class="btn-primary">Adicionar Tarefa Padrão</button>
+                <button data-action="add" class="btn-primary">
+                    Adicionar Tarefa Padrão
+                </button>
             </div>`;
             
             html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
@@ -1542,7 +1603,13 @@
         }
 
         // --- Modals ---
-        async function openModal(type, id = null) {
+        function openModal(type, id = null) {
+            // Apenas editores ou admins podem abrir o modal para adicionar/editar
+            if (state.userRole === 'leitor') {
+                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+                return;
+            }
+
             state.editingId = id;
             state.editingCollection = type;
             dom.modalLoading.classList.remove('hidden');
@@ -1550,9 +1617,6 @@
             
             let title = '';
             let html = '';
-
-            // Pequeno atraso para garantir que o DOM está pronto
-            await new Promise(res => setTimeout(res, 50));
 
             if (type === 'atividade') {
                 title = id ? 'Editar Atividade' : 'Lançar Atividade';
@@ -1623,16 +1687,13 @@
                             <input type="email" id="email" name="email" value="${func.email || ''}" class="form-input">
                         </div>
                         
-                        <!-- Alterado para Upload de Ficheiro -->
                         <div>
                             <label for="fotoFile" class="block text-sm font-medium text-stone-700">Foto</label>
                             ${func.fotoUrl ? `<img src="${func.fotoUrl}" alt="Foto atual" class="w-20 h-20 rounded-full object-cover my-2 shadow-md">` : '<div class="w-20 h-20 rounded-full bg-stone-100 flex items-center justify-center my-2 border"><svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg></div>'}
                             <input type="file" id="fotoFile" name="fotoFile" class="mt-1 block w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[var(--color-accent-light)] file:text-[var(--color-accent-dark)] hover:file:bg-[var(--color-accent-light-hover)] file:cursor-pointer" accept="image/png, image/jpeg">
-                            <!-- Input escondido para manter a URL atual se não for alterada -->
                             <input type="hidden" id="fotoUrl" name="fotoUrl" value="${func.fotoUrl || ''}">
                             <p class="text-xs text-stone-500 mt-1">Envie um ficheiro (PNG, JPG). Deixe em branco para manter a foto atual.</p>
                         </div>
-                        <!-- Fim da Alteração -->
                         
                         <div>
                             <label for="cargoId" class="block text-sm font-medium text-stone-700">Cargo</label>
@@ -1682,7 +1743,6 @@
             dom.modalLoading.classList.add('hidden');
             dom.modal.classList.remove('hidden');
 
-            // Adicionar listener para o select de tarefas padrão
             if (type === 'atividade') {
                 const selectTarefa = document.getElementById('tarefaPadrao');
                 const inputTitulo = document.getElementById('titulo');
@@ -1706,7 +1766,6 @@
             const form = document.getElementById('modal-form');
             if (!form.reportValidity()) return;
 
-            // Mostra estado de carregamento no botão
             dom.btnModalSave.disabled = true;
             dom.btnModalSave.innerHTML = 'Salvando...';
 
@@ -1715,17 +1774,15 @@
             
             let collection;
             let fileToUpload = null;
-            let existingFotoUrl = data.fotoUrl || ""; // Pega a URL existente do input escondido
+            let existingFotoUrl = data.fotoUrl || ""; 
 
             if (state.editingCollection === 'atividade') collection = atividadesCollection;
             if (state.editingCollection === 'funcionarios') {
                 collection = funcionariosCollection;
-                // Verifica se um novo ficheiro foi enviado
                 const fotoFileInput = document.getElementById('fotoFile');
                 if (fotoFileInput && fotoFileInput.files.length > 0) {
                     fileToUpload = fotoFileInput.files[0];
                 }
-                // Não queremos salvar o 'fotoFile' (que é um FileList) no Firestore
                 delete data.fotoFile; 
             }
             if (state.editingCollection === 'cargos') collection = cargosCollection;
@@ -1734,33 +1791,27 @@
 
             if (!collection) {
                 showToast('Erro: Tipo de coleção desconhecido.', 'error');
-                // Restaura o botão em caso de erro
                 dom.btnModalSave.disabled = false;
                 dom.btnModalSave.innerHTML = 'Salvar';
                 return;
             }
 
             try {
-                // --- Lógica de Upload ---
                 if (fileToUpload) {
                     dom.btnModalSave.innerHTML = 'Enviando foto...';
-                    // Cria uma referência única para o ficheiro
                     const storageRef = ref(storage, `funcionarios_fotos/${userId}_${Date.now()}_${fileToUpload.name}`);
                     const snapshot = await uploadBytes(storageRef, fileToUpload);
                     const downloadURL = await getDownloadURL(snapshot.ref);
-                    data.fotoUrl = downloadURL; // Sobrescreve data.fotoUrl com a nova URL
+                    data.fotoUrl = downloadURL; 
                 } else {
-                    data.fotoUrl = existingFotoUrl; // Garante que a URL antiga seja mantida se nenhum ficheiro novo foi enviado
+                    data.fotoUrl = existingFotoUrl; 
                 }
-                // --- Fim da Lógica de Upload ---
 
                 if (state.editingId) {
-                    // Atualizar
                     const docRef = doc(db, collection.path, state.editingId);
                     await updateDoc(docRef, data);
                     showToast('Item atualizado com sucesso!', 'success');
                 } else {
-                    // Adicionar
                     await addDoc(collection, data);
                     showToast('Item salvo com sucesso!', 'success');
                 }
@@ -1769,7 +1820,6 @@
                 console.error("Erro ao salvar:", error);
                 showToast(`Erro ao salvar: ${error.message}`, 'error');
             } finally {
-                // Restaura o botão, independentemente do resultado
                 dom.btnModalSave.disabled = false;
                 dom.btnModalSave.innerHTML = 'Salvar';
             }
@@ -1792,7 +1842,7 @@
             if (state.editingCollection === 'tarefas') collectionPath = tarefasPadraoPath;
 
             if (!collectionPath) {
-                showToast('Erro: Coleção desconhecida.', 'error');
+                showToast('Erro: Tipo de coleção desconhecido.', 'error');
                 return;
             }
 
@@ -1826,69 +1876,41 @@
 
         // --- Função para Adicionar Dados Iniciais (Mock) ---
         async function seedInitialData() {
+            // Esta função agora só verifica, não cria
+            const cargoQuery = query(cargosCollection, limit(1));
+            const cargoSnapshot = await getDocs(cargoQuery);
+            
+            if (!cargoSnapshot.empty) {
+                console.log("Dados já existem. Não é necessário semear.");
+                return; // Se já tem dados, não faz nada
+            }
+
             try {
-                // 1. Verificar/Adicionar CARGOS
-                let cargoDesignerId, cargoEdicaoId;
-                const cargoQuery = query(cargosCollection, where("nome", "==", "Designer"));
-                const cargoSnapshot = await getDocs(cargoQuery);
+                console.log("Adicionando dados iniciais (Cargos, Tarefas, Funcionários)...");
+                // 1. Adicionar CARGOS
+                const docRefDesigner = await addDoc(cargosCollection, { nome: "Designer" });
+                const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
                 
-                if (cargoSnapshot.empty) {
-                    console.log("Adicionando dados iniciais (Cargos)...");
-                    const docRefDesigner = await addDoc(cargosCollection, { nome: "Designer" });
-                    cargoDesignerId = docRefDesigner.id;
-                    const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
-                    cargoEdicaoId = docRefEdicao.id;
-                } else {
-                    console.log("Cargos já existem.");
-                    cargoSnapshot.docs.forEach(doc => {
-                        if (doc.data().nome === "Designer") cargoDesignerId = doc.id;
-                    });
-                    // Garante que ambos os cargos existam
-                    const cargoQuery2 = query(cargosCollection, where("nome", "==", "Edição"));
-                    const cargoSnapshot2 = await getDocs(cargoQuery2);
-                    if (cargoSnapshot2.empty) {
-                         const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
-                         cargoEdicaoId = docRefEdicao.id;
-                    } else {
-                        cargoEdicaoId = cargoSnapshot2.docs[0].id;
-                    }
-                }
-
-                // 2. Verificar/Adicionar TAREFAS PADRÃO
-                const tarefaQuery = query(tarefasPadraoCollection, where("nome", "==", "Planejamento"));
-                const tarefaSnapshot = await getDocs(tarefaQuery);
-                if (tarefaSnapshot.empty) {
-                    console.log("Adicionando dados iniciais (Tarefas)...");
-                    await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
-                    await addDoc(tarefasPadraoCollection, { nome: "Design" }); // Corrigido de "desinger"
-                }
-
-                // 3. Verificar/Adicionar FUNCIONÁRIOS
-                const funcQuery = query(funcionariosCollection, where("nome", "==", "Sabrina"));
-                const funcSnapshot = await getDocs(funcQuery);
+                // 2. Adicionar TAREFAS PADRÃO
+                await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
+                await addDoc(tarefasPadraoCollection, { nome: "Design" }); 
                 
-                if (funcSnapshot.empty) {
-                    console.log("Adicionando dados iniciais (Funcionários)...");
-                    if (cargoDesignerId) {
-                        await addDoc(funcionariosCollection, {
-                            nome: "Sabrina",
-                            email: "sabrina@email.com",
-                            cargoId: cargoDesignerId,
-                            fotoUrl: "https://placehold.co/100x100/FFF0E7/C75D1B?text=S" // Tema Laranja
-                        });
-                    }
-                    if (cargoEdicaoId) {
-                        await addDoc(funcionariosCollection, {
-                            nome: "Maikon",
-                            email: "maikon@email.com",
-                            cargoId: cargoEdicaoId,
-                            fotoUrl: "https://placehold.co/100x100/E0E8F0/4A698E?text=M" // Tema Azul Sereno
-                        });
-                    }
-                }
+                // 3. Adicionar FUNCIONÁRIOS
+                await addDoc(funcionariosCollection, {
+                    nome: "Sabrina",
+                    email: "sabrina@email.com",
+                    cargoId: docRefDesigner.id,
+                    fotoUrl: "https://placehold.co/100x100/FFF0E7/C75D1B?text=S" // Tema Laranja
+                });
+                await addDoc(funcionariosCollection, {
+                    nome: "Maikon",
+                    email: "maikon@email.com",
+                    cargoId: docRefEdicao.id,
+                    fotoUrl: "https://placehold.co/100x100/E0E8F0/4A698E?text=M" // Tema Azul Sereno
+                });
+                console.log("Dados iniciais adicionados.");
             } catch (error) {
                 console.error("Erro ao adicionar dados iniciais:", error);
-                showToast("Erro ao tentar salvar dados de exemplo.", "error");
             }
         }
 
@@ -1915,41 +1937,35 @@
             --color-accent-light: #E0E8F0;
             --color-accent-light-hover: #D0DDE8;
             --color-accent-text: #FFFFFF;
+            
+            /* Fontes */
+            --font-family: 'Inter', sans-serif;
         }
         
         .theme-solar {
-            /* Amarelo Solar: #FFC82E */
             --color-accent: #FFC82E;
-            --color-accent-dark: #E6B429;
-            --color-accent-darker: #CC9F24;
-            --color-accent-light: #FFF8E5;
-            --color-accent-light-hover: #FFF1CD;
-            --color-accent-text: #1f2937; /* Texto escuro para botões amarelos */
+            --color-accent-text: #1f2937;
         }
         
         .theme-laranja {
-            /* Laranja: #F97422 */
             --color-accent: #F97422;
-            --color-accent-dark: #E0691E;
-            --color-accent-darker: #C75D1B;
-            --color-accent-light: #FFF0E7;
-            --color-accent-light-hover: #FFE8D9;
             --color-accent-text: #FFFFFF;
         }
         
         .theme-custom {
-            /* --color-accent e --color-accent-text são definidos via JS */
+            /* As variáveis --color-accent, etc., são definidas via JS */
         }
 
         body {
             font-family: var(--font-family);
         }
-        
-        /* Botões */
-        .btn-primary { @apply px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-text)] rounded-md shadow-sm hover:bg-[var(--color-accent-dark)] transition-colors text-sm font-medium flex items-center justify-center; }
-        .btn-secondary { @apply px-4 py-2 bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] rounded-md shadow-sm hover:bg-stone-200 transition-colors text-sm font-medium; }
-        .btn-danger { @apply px-4 py-2 bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 transition-colors text-sm font-medium; }
-        .btn-icon { @apply p-2 bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] rounded-md hover:bg-stone-200 transition-colors; }
+
+        /* Classes de Botões Reutilizáveis */
+        .btn { @apply px-4 py-2 rounded-md text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2; }
+        .btn-primary { @apply btn bg-[var(--color-accent)] text-[var(--color-accent-text)] hover:bg-[var(--color-accent-dark)] focus:ring-[var(--color-accent)]; }
+        .btn-secondary { @apply btn bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] hover:bg-stone-200 focus:ring-[var(--color-accent)]; }
+        .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500; }
+        .btn-icon { @apply p-2 rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-alt)] hover:text-[var(--color-text-primary)] transition-colors; }
         .btn-link { @apply text-[var(--color-accent-dark)] hover:text-[var(--color-accent-darker)] font-medium transition-colors; }
         .btn-link-danger { @apply text-red-600 hover:text-red-800 font-medium transition-colors; }
 
@@ -1964,11 +1980,9 @@
         
         .theme-swatch { @apply w-6 h-6 rounded-full border border-gray-300 cursor-pointer transition-all; }
         
-        /* Tabelas */
         .table-header { @apply px-6 py-3 text-left text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wider; }
         .table-cell { @apply px-6 py-4 whitespace-nowrap text-sm text-stone-700; }
         
-        /* Formulários */
         .form-input { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
         .form-select { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
 
@@ -1986,7 +2000,14 @@
 </head>
 <body class="bg-[var(--color-bg)] antialiased" style="font-family: var(--font-family);">
 
-    <!-- Wrapper da Aplicação Principal (Inicia escondido) -->
+    <!-- Ecrã de Erro para GitHub -->
+    <div id="config-error" class="hidden min-h-screen flex items-center justify-center bg-stone-100 p-8">
+        <div class="bg-white p-10 rounded-lg shadow-md max-w-lg w-full text-center">
+            <!-- Conteúdo injetado pelo showConfigError() -->
+        </div>
+    </div>
+
+    <!-- Aplicação Principal (Escondida por padrão) -->
     <div id="app-view" class="hidden">
         <!-- Menu Lateral (Mobile: escondido por padrão) -->
         <nav id="sidebar-menu" class="fixed inset-y-0 left-0 bg-[var(--color-sidebar)] shadow-md w-64 p-4 z-30 transform -translate-x-full md:translate-x-0 transition-all duration-300 ease-in-out flex flex-col">
@@ -2001,27 +2022,27 @@
             <div class="flex flex-col space-y-2">
                 <button id="menu-pautas" class="menu-btn justify-start menu-btn-active">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                    <span class="sidebar-text">Pautas</span>
+                    <span class="sidebar-text text-left">Pautas</span>
                 </button>
                 
                 <button id="btn-lancar-atividade-menu" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <span class="sidebar-text">Lançar Atividade</span>
+                    <span class="sidebar-text text-left">Lançar Atividade</span>
                 </button>
 
                 <button id="menu-dashboard" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>
-                    <span class="sidebar-text">Dashboard</span>
+                    <span class="sidebar-text text-left">Dashboard</span>
                 </button>
 
                 <button id="menu-admin" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    <span class="sidebar-text">Administrativo</span>
+                    <span class="sidebar-text text-left">Administrativo</span>
                 </button>
 
                 <button id="menu-tema" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a4 4 0 014-4h10a4 4 0 014 4v12a4 4 0 01-4 4H7zm0 0l8.5-8.5M7 3v18m8.5-18l-8.5 8.5m0 0L11 11"></path></svg>
-                    <span class="sidebar-text">Tema</span>
+                    <span class="sidebar-text text-left">Tema</span>
                 </button>
             </div>
             
@@ -2033,7 +2054,7 @@
                 </button>
                 
                 <button id="btn-logout" class="menu-btn justify-start w-full">
-                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     <span class="sidebar-text text-left">Sair</span>
                 </button>
                 
@@ -2046,50 +2067,62 @@
         
         <!-- Conteúdo Principal -->
         <div id="main-content-wrapper" class="md:ml-64 transition-all duration-300 ease-in-out">
-            <!-- Header Mobile -->
-            <header class="md:hidden bg-[var(--color-sidebar)] shadow-md p-4 flex justify-between items-center">
-                <h1 class="text-lg font-bold text-white"><span class="font-normal">Gestão de</span> Pautas</h1>
-                <button id="mobile-menu-button" class="text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-                </button>
-            </header>
-            
-            <!-- Container do Conteúdo -->
-            <main class="p-6">
-            
-                <!-- Filtros Globais (Movidos para cá) -->
-                <div class="bg-[var(--color-card)] p-4 rounded-lg shadow-sm mb-6">
-                    <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                        <select id="filter-periodo" class="form-select text-sm">
-                            <option value="semana">Esta Semana</option>
-                            <option value="hoje">Hoje</option>
-                            <option value="todos">Todos</option>
-                        </select>
-                        <select id="filter-funcionario" class="form-select text-sm">
-                            <option value="todos">Todos Funcionários</option>
-                        </select>
-                        <select id="filter-cargo" class="form-select text-sm">
-                            <option value="todos">Todos Cargos</option>
-                        </select>
-                        <select id="filter-cliente" class="form-select text-sm">
-                            <option value="todos">Todos Clientes</option>
-                        </select>
-                        <select id="filter-tarefa" class="form-select text-sm">
-                            <option value="todos">Todas Tarefas</option>
-                        </select>
+            <!-- Header (Mobile) -->
+            <header class="md:hidden bg-white shadow-sm sticky top-0 z-20">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex justify-between items-center h-16">
+                        <!-- Botão Menu Mobile -->
+                        <button id="mobile-menu-button" class="text-stone-500 hover:text-stone-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        </button>
+                        
+                        <h1 class="text-xl font-bold text-[var(--color-accent-dark)]">
+                            Gestão de Pautas
+                        </h1>
+                        
+                        <!-- Espaçador -->
+                        <div></div>
                     </div>
                 </div>
+            </header>
+
+            <!-- Conteúdo da View -->
+            <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             
                 <!-- VIEW: PAUTAS -->
                 <div id="main-view-pautas">
                     <div class="flex items-center justify-between mb-4">
-                        <div id="pautas-nav" class="flex flex-wrap gap-3">
+                        <div id="pautas-nav" class="flex flex-wrap gap-3"> <!-- Alterado para gap-3 -->
                             <button data-view="calendario" class="sub-nav-btn sub-nav-btn-active">Calendário</button>
                             <button data-view="semana" class="sub-nav-btn sub-nav-btn-inactive">Semana</button>
                             <button data-view="lista" class="sub-nav-btn sub-nav-btn-inactive">Lista Geral</button>
                         </div>
                     </div>
+                    
+                    <!-- Filtros Globais -->
+                    <div class="bg-[var(--color-card)] p-3 rounded-lg shadow-sm mb-4">
+                        <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                            <select id="filter-periodo" class="form-select text-sm">
+                                <option value="semana">Esta Semana</option>
+                                <option value="hoje">Hoje</option>
+                                <option value="todos">Todos</option>
+                            </select>
+                            <select id="filter-funcionario" class="form-select text-sm">
+                                <option value="todos">Todos Funcionários</option>
+                            </select>
+                            <select id="filter-cargo" class="form-select text-sm">
+                                <option value="todos">Todos Cargos</option>
+                            </select>
+                            <select id="filter-cliente" class="form-select text-sm">
+                                <option value="todos">Todos Clientes</option>
+                            </select>
+                            <select id="filter-tarefa" class="form-select text-sm">
+                                <option value="todos">Todas Tarefas</option>
+                            </select>
+                        </div>
+                    </div>
+                    
                     <div id="pautas-content">
                         <!-- Conteúdo Pautas (Calendário/Lista) renderizado aqui -->
                     </div>
@@ -2097,15 +2130,23 @@
                 
                 <!-- VIEW: DASHBOARD -->
                 <div id="main-view-dashboard" class="hidden">
+                    <!-- Filtros (Dashboard também usa os filtros) -->
+                    <div class="bg-[var(--color-card)] p-3 rounded-lg shadow-sm mb-4">
+                        <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
+                        <p class="text-xs text-stone-500 mb-2">Os filtros de Pautas também se aplicam ao Dashboard.</p>
+                    </div>
+                    
                     <div id="dashboard-content">
-                        <!-- Conteúdo Dashboard (Gráficos) renderizado aqui -->
+                        <div class="text-center p-10 text-stone-500">
+                            Carregando dashboard...
+                        </div>
                     </div>
                 </div>
                 
                 <!-- VIEW: ADMIN -->
                 <div id="main-view-admin" class="hidden">
                     <div class="flex items-center justify-between mb-4">
-                        <div id="admin-nav" class="flex flex-wrap gap-3">
+                        <div id="admin-nav" class="flex flex-wrap gap-3"> <!-- Alterado para gap-3 -->
                             <button data-view="funcionarios" class="sub-nav-btn sub-nav-btn-active">Funcionários</button>
                             <button data-view="cargos" class="sub-nav-btn sub-nav-btn-inactive">Cargos</button>
                             <button data-view="clientes" class="sub-nav-btn sub-nav-btn-inactive">Clientes</button>
@@ -2120,30 +2161,86 @@
             </main>
         </div>
     </div>
-    
+
     <!-- Modal Principal -->
     <div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div class="flex justify-between items-center p-4 border-b">
+        <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-stone-200">
                 <h3 id="modal-title" class="text-lg font-semibold text-stone-800"></h3>
                 <button id="btn-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
             </div>
             <div id="modal-content" class="p-6 overflow-y-auto relative">
                 <!-- Formulário renderizado aqui -->
                 <div id="modal-loading" class="hidden absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center">
-                    <span class="text-lg text-[var(--color-accent-dark)]">Carregando...</span>
+                    <span class="text-[var(--color-accent-dark)]">Carregando...</span>
                 </div>
             </div>
-            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
+            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t border-stone-200 rounded-b-lg">
                 <button id="btn-modal-cancel" class="btn-secondary">Cancelar</button>
                 <button id="btn-modal-save" class="btn-primary">Salvar</button>
             </div>
         </div>
     </div>
     
+    <!-- Modal de Personalização de Tema -->
+    <div id="theme-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
+        <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-stone-200">
+                <h3 class="text-lg font-semibold text-stone-800">Personalizar Tema</h3>
+                <button id="theme-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-6">
+                
+                <!-- Temas Rápidos -->
+                <div>
+                    <label class="block text-sm font-medium text-stone-700 mb-2">Temas Rápidos</label>
+                    <div class="flex space-x-3">
+                        <button id="theme-quick-sereno" class="theme-swatch bg-[#648AAE]" title="Tema Azul Sereno"></button>
+                        <button id="theme-quick-solar" class="theme-swatch bg-[#FFC82E]" title="Tema Amarelo Solar"></button>
+                        <button id="theme-quick-laranja" class="theme-swatch bg-[#F97422]" title="Tema Laranja"></button>
+                    </div>
+                </div>
+
+                <!-- Cor Customizada -->
+                <div>
+                    <label class="block text-sm font-medium text-stone-700 mb-2">Cor de Destaque</label>
+                    <div class="flex items-center space-x-2">
+                        <input id="theme-color-picker" type="color" class="w-10 h-10 p-0 border-none rounded-md cursor-pointer" value="#648AAE">
+                        <input id="theme-hex-input" type="text" class="form-input w-28" placeholder="#648AAE">
+                        <span class="text-xs text-stone-500">Digite o código Hex</span>
+                    </div>
+                </div>
+                
+                <!-- Fonte -->
+                <div>
+                    <label for="theme-font-select" class="block text-sm font-medium text-stone-700">Fonte da Aplicação</LabeL>
+                    <select id="theme-font-select" class="form-select mt-1">
+                        <option value="Inter">Inter (Padrão)</option>
+                        <option value="Roboto Slab">Roboto Slab (Serifada)</option>
+                        <option value="Inconsolata">Inconsolata (Mono)</option>
+                    </select>
+                </div>
+                
+                <!-- Tamanho da Fonte -->
+                <div>
+                    <label class="block text-sm font-medium text-stone-700 mb-2">Tamanho do Texto</label>
+                    <div class="flex items-center space-x-2">
+                        <button id="theme-font-size-decrease" class="btn-secondary px-3 py-1">A-</button>
+                        <button id="theme-font-size-increase" class="btn-secondary px-3 py-1">A+</button>
+                    </div>
+                </div>
+                
+            </div>
+            <div class="flex justify-between items-center p-4 bg-[var(--color-bg-alt)] border-t border-stone-200 rounded-b-lg">
+                <button id="theme-reset" class="btn-link-danger text-sm">Restaurar Padrões</button>
+                <button id="theme-modal-close-bottom" class="btn-primary" onclick="document.getElementById('theme-modal').classList.add('hidden')">Fechar</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Modal de Confirmação de Exclusão -->
     <div id="confirm-delete-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+        <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-md">
             <div class="p-6">
                 <h3 class="text-lg font-medium text-stone-900">Confirmar Exclusão</h3>
                 <p class="mt-2 text-sm text-stone-600">Você tem certeza que deseja excluir este item? Esta ação não pode ser desfeita.</p>
@@ -2158,73 +2255,6 @@
     <!-- Toast de Notificação -->
     <div id="toast" class="hidden fixed bottom-4 right-4 max-w-xs text-white px-4 py-3 rounded-lg shadow-lg z-50">
         <span id="toast-message"></span>
-    </div>
-    
-    <!-- Modal de Tema -->
-    <div id="theme-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
-             <div class="flex justify-between items-center p-4 border-b">
-                <h3 id="theme-modal-title" class="text-lg font-semibold text-stone-800">Personalizar Tema</h3>
-                <button id="theme-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
-            </div>
-            <div class="p-6 space-y-6">
-                <!-- Temas Rápidos -->
-                <div>
-                    <h4 class="text-sm font-medium text-stone-600 mb-2">Temas Rápidos</h4>
-                    <div class="flex space-x-3">
-                        <div class="text-center">
-                            <button id="theme-quick-sereno" class="theme-swatch bg-[#648AAE]" title="Tema Azul Sereno"></button>
-                            <span class="text-xs text-stone-500 block mt-1">Sereno</span>
-                        </div>
-                        <div class="text-center">
-                            <button id="theme-quick-solar" class="theme-swatch bg-[#FFC82E]" title="Tema Amarelo Solar"></button>
-                            <span class="text-xs text-stone-500 block mt-1">Solar</span>
-                        </div>
-                        <div class="text-center">
-                            <button id="theme-quick-laranja" class="theme-swatch bg-[#F97422]" title="Tema Laranja"></button>
-                            <span class="text-xs text-stone-500 block mt-1">Laranja</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Cor Personalizada -->
-                <div>
-                    <h4 class="text-sm font-medium text-stone-600 mb-2">Cor de Destaque</h4>
-                    <div class="flex items-center space-x-2">
-                        <input type="color" id="theme-color-picker" class="w-10 h-10 p-0 border-none rounded-md cursor-pointer">
-                        <input type="text" id="theme-hex-input" class="form-input w-full" placeholder="#648AAE">
-                    </div>
-                </div>
-                
-                <!-- Fonte -->
-                <div>
-                    <h4 class="text-sm font-medium text-stone-600 mb-2">Fonte da Aplicação</h4>
-                    <select id="theme-font-select" class="form-select">
-                        <option value="Inter">Inter (Padrão)</option>
-                        <option value="Roboto Slab">Roboto Slab (Serifada)</option>
-                        <option value="Inconsolata">Inconsolata (Mono)</option>
-                    </select>
-                </div>
-                
-                <!-- Tamanho da Fonte -->
-                <div>
-                    <h4 class="text-sm font-medium text-stone-600 mb-2">Tamanho do Texto</h4>
-                    <div class="flex items-center space-x-2">
-                        <button id="theme-font-size-decrease" class="btn-secondary text-lg leading-none px-3 py-1">-</button>
-                        <span class="text-sm text-stone-600">Ajustar</span>
-                        <button id="theme-font-size-increase" class="btn-secondary text-lg leading-none px-3 py-1">+</button>
-                    </div>
-                </div>
-            </div>
-             <div class="flex justify-end p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
-                <button id="theme-reset" class="btn-secondary">Restaurar Padrões</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Mensagem de Erro de Configuração (Adicionada de volta) -->
-    <div id="config-error" class="hidden p-10 text-center max-w-lg mx-auto mt-10 bg-white shadow-lg rounded-lg border border-red-200">
-        <!-- O conteúdo será preenchido pelo JavaScript -->
     </div>
 
 </body>
