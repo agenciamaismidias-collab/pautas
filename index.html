@@ -1,0 +1,2071 @@
+<!-- Chosen Palette: Warm Neutral (Tailwind Slate/Stone com Acento Azul) -->
+<!-- ... (O plano e visualização originais foram removidos para dar lugar à nova estrutura) -->
+<!-- CONFIRMATION: SVG icons are now used. -->
+<!DOCTYPE html>
+<html lang="pt-br" style="font-size: 15px; --font-family: 'Inter', sans-serif;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGAP - Sistema de Gestão de Atividades e Pautas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Novas fontes importadas -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;700&family=Inconsolata:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Lógica de autenticação revertida para a versão simples
+        import {
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            getDoc,
+            addDoc,
+            setDoc,
+            updateDoc,
+            deleteDoc,
+            onSnapshot,
+            collection,
+            query,
+            where,
+            getDocs
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Importação do Firebase Storage
+        import {
+            getStorage,
+            ref,
+            uploadBytes,
+            getDownloadURL
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+        // --- Configuração ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEFAULT_FALLBACK_KEY", authDomain: "DEFAULT.firebaseapp.com", projectId: "DEFAULT_PROJECT_ID" };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'sgap-default-app';
+        
+        let db, auth, userId;
+        let app, storage; // Adicionado storage
+
+        // --- Collections ---
+        let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection;
+        const cargosPath = `/artifacts/${appId}/public/data/cargos`;
+        const funcionariosPath = `/artifacts/${appId}/public/data/funcionarios`;
+        const atividadesPath = `/artifacts/${appId}/public/data/atividades`;
+        const clientesPath = `/artifacts/${appId}/public/data/clientes`;
+        const tarefasPadraoPath = `/artifacts/${appId}/public/data/tarefasPadrao`;
+
+        // --- Estado Global da Aplicação ---
+        const state = {
+            cargos: [],
+            funcionarios: [],
+            atividades: [],
+            clientes: [],
+            tarefasPadrao: [],
+            currentMainView: 'pautas', // 'pautas', 'dashboard' ou 'admin'
+            currentPautasView: 'calendario', // 'calendario', 'semana' ou 'lista'
+            currentAdminView: 'funcionarios', // 'funcionarios' ou 'cargos' ou 'clientes' ou 'tarefas'
+            currentDate: new Date(),
+            editingId: null,
+            editingCollection: null,
+            filterPeriodo: 'semana', 
+            filterFuncionario: 'todos',
+            filterCargo: 'todos',
+            filterCliente: 'todos',
+            filterTarefa: 'todos', 
+            isAuthReady: false,
+            dashboardChart: null, 
+            dashboardDoughnutChart: null,
+            isSidebarMinimized: false, // Estado do menu
+        };
+
+        // --- DOM Elements ---
+        const dom = {};
+
+        // --- Inicialização ---
+        document.addEventListener('DOMContentLoaded', () => {
+            cacheDOMElements();
+            setupUIEventListeners();
+            loadStateFromLocalStorage(); // Adicionado para carregar filtros e abas
+            initFirebase();
+            applyThemeFromLocalStorage(); // Aplica tema salvo
+            applySidebarStateFromLocalStorage(); // Aplica estado do menu
+        });
+
+        function cacheDOMElements() {
+            dom.appView = document.getElementById('app-view'); // Wrapper da App
+
+            dom.mainViewPautas = document.getElementById('main-view-pautas');
+            dom.mainViewDashboard = document.getElementById('main-view-dashboard');
+            dom.mainViewAdmin = document.getElementById('main-view-admin');
+            
+            // Novo Menu Lateral
+            dom.sidebarMenu = document.getElementById('sidebar-menu');
+            dom.sidebarTitle = document.getElementById('sidebar-title');
+            dom.mobileMenuButton = document.getElementById('mobile-menu-button');
+            dom.sidebarToggleButton = document.getElementById('sidebar-toggle-button');
+            dom.mainContentWrapper = document.getElementById('main-content-wrapper');
+
+            dom.menuPautas = document.getElementById('menu-pautas');
+            dom.menuDashboard = document.getElementById('menu-dashboard');
+            dom.menuAdmin = document.getElementById('menu-admin');
+            dom.menuTema = document.getElementById('menu-tema');
+            dom.btnLancarAtividadeMenu = document.getElementById('btn-lancar-atividade-menu');
+            dom.btnLogout = document.getElementById('btn-logout'); // Botão Sair
+
+            dom.pautasContent = document.getElementById('pautas-content');
+            dom.dashboardContent = document.getElementById('dashboard-content');
+            dom.adminContent = document.getElementById('admin-content');
+            dom.pautasNav = document.getElementById('pautas-nav');
+            dom.adminNav = document.getElementById('admin-nav');
+            
+            // Modals
+            dom.modal = document.getElementById('modal');
+            dom.modalTitle = document.getElementById('modal-title');
+            dom.modalContent = document.getElementById('modal-content');
+            dom.modalLoading = document.getElementById('modal-loading');
+            dom.btnModalClose = document.getElementById('btn-modal-close');
+            dom.btnModalCancel = document.getElementById('btn-modal-cancel');
+            dom.btnModalSave = document.getElementById('btn-modal-save');
+            
+            dom.confirmDeleteModal = document.getElementById('confirm-delete-modal');
+            dom.btnConfirmDelete = document.getElementById('btn-confirm-delete');
+            dom.btnCancelDelete = document.getElementById('btn-cancel-delete');
+
+            dom.toast = document.getElementById('toast');
+            dom.toastMessage = document.getElementById('toast-message');
+
+            dom.userIdDisplay = document.getElementById('user-id-display');
+            dom.userIdDisplayWrapper = document.getElementById('user-id-wrapper');
+            
+            // Filtros
+            dom.filterPeriodo = document.getElementById('filter-periodo');
+            dom.filterFuncionario = document.getElementById('filter-funcionario');
+            dom.filterCargo = document.getElementById('filter-cargo');
+            dom.filterCliente = document.getElementById('filter-cliente');
+            dom.filterTarefa = document.getElementById('filter-tarefa'); 
+            
+            // Novo Modal de Tema
+            dom.themeModal = document.getElementById('theme-modal');
+            dom.themeModalClose = document.getElementById('theme-modal-close');
+            dom.themeQuickSereno = document.getElementById('theme-quick-sereno');
+            dom.themeQuickSolar = document.getElementById('theme-quick-solar');
+            dom.themeQuickLaranja = document.getElementById('theme-quick-laranja');
+            dom.themeColorPicker = document.getElementById('theme-color-picker');
+            dom.themeHexInput = document.getElementById('theme-hex-input');
+            dom.themeFontSelect = document.getElementById('theme-font-select');
+            dom.themeFontSizeDecrease = document.getElementById('theme-font-size-decrease');
+            dom.themeFontSizeIncrease = document.getElementById('theme-font-size-increase');
+            dom.themeReset = document.getElementById('theme-reset');
+        }
+        
+        // --- Funções Utilitárias de Tema (Movidas para o topo) ---
+        function getLuminance(hex) {
+            let r = 0, g = 0, b = 0;
+            if (hex.length == 7) {
+                r = parseInt(hex.substring(1, 3), 16);
+                g = parseInt(hex.substring(3, 5), 16);
+                b = parseInt(hex.substring(5, 7), 16);
+            }
+            return (0.2126 * r + 0.7152 * g + 0.0722 * b); // per ITU-R BT.709
+        }
+        
+        function shadeColor(color, percent) {
+            if (!color || !color.startsWith('#') || color.length < 7) {
+                console.warn("Cor inválida para shadeColor:", color);
+                color = '#648AAE'; // Cor padrão (Azul Sereno)
+            }
+            let R = parseInt(color.substring(1,3),16);
+            let G = parseInt(color.substring(3,5),16);
+            let B = parseInt(color.substring(5,7),16);
+
+            R = parseInt(R * (100 + percent) / 100);
+            G = parseInt(G * (100 + percent) / 100);
+            B = parseInt(B * (100 + percent) / 100);
+
+            R = (R<255)?R:255;  
+            G = (G<255)?G:255;  
+            B = (B<255)?B:255;  
+            
+            R = (R>0)?R:0;
+            G = (G>0)?G:0;
+            B = (B>0)?B:0;
+
+            const RR = ((R.toString(16).length==1)?"0"+R.toString(16):R.toString(16));
+            const GG = ((G.toString(16).length==1)?"0"+G.toString(16):G.toString(16));
+            const BB = ((B.toString(16).length==1)?"0"+B.toString(16):B.toString(16));
+
+            return "#"+RR+GG+BB;
+        }
+
+        async function initFirebase() {
+            try {
+                setLogLevel('Debug');
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                storage = getStorage(app); 
+
+                cargosCollection = collection(db, cargosPath);
+                funcionariosCollection = collection(db, funcionariosPath);
+                atividadesCollection = collection(db, atividadesPath);
+                clientesCollection = collection(db, clientesPath);
+                tarefasPadraoCollection = collection(db, tarefasPadraoPath);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        dom.userIdDisplay.textContent = `User ID: ${userId.substring(0, 8)}...`; 
+                        state.isAuthReady = true;
+                        
+                        dom.appView.classList.remove('hidden');
+
+                        await seedInitialData(); 
+                        setupFirestoreListeners();
+                        render();
+                    } else {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Erro ao inicializar Firebase:", error);
+                showToast("Erro ao conectar com o banco de dados.", 'error');
+                try {
+                    if (!auth.currentUser) {
+                        await signInAnonymously(auth);
+                    }
+                } catch (authError) {
+                    console.error("Erro no login anônimo de fallback:", authError);
+                }
+            }
+        }
+        
+        function setupFirestoreListeners() {
+            if (!state.isAuthReady) return;
+
+            onSnapshot(query(cargosCollection), (snapshot) => {
+                state.cargos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.cargos.sort((a, b) => a.nome.localeCompare(b.nome));
+                render();
+            }, (error) => console.error("Erro ao ouvir 'cargos':", error));
+
+            onSnapshot(query(funcionariosCollection), (snapshot) => {
+                state.funcionarios = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.funcionarios.sort((a, b) => a.nome.localeCompare(b.nome));
+                render();
+            }, (error) => console.error("Erro ao ouvir 'funcionarios':", error));
+
+            onSnapshot(query(atividadesCollection), (snapshot) => {
+                state.atividades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                render();
+            }, (error) => console.error("Erro ao ouvir 'atividades':", error));
+            
+            onSnapshot(query(clientesCollection), (snapshot) => {
+                state.clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.clientes.sort((a, b) => a.nome.localeCompare(b.nome));
+                render();
+            }, (error) => console.error("Erro ao ouvir 'clientes':", error));
+
+            onSnapshot(query(tarefasPadraoCollection), (snapshot) => {
+                state.tarefasPadrao = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.tarefasPadrao.sort((a, b) => a.nome.localeCompare(b.nome));
+                render(); 
+            }, (error) => console.error("Erro ao ouvir 'tarefasPadrao':", error));
+        }
+
+        // --- Event Handlers ---
+        function setupUIEventListeners() {
+            dom.mobileMenuButton.addEventListener('click', () => {
+                dom.sidebarMenu.classList.toggle('-translate-x-full');
+            });
+            dom.sidebarToggleButton.addEventListener('click', toggleSidebar);
+            
+            dom.menuPautas.addEventListener('click', () => switchMainView('pautas'));
+            dom.menuDashboard.addEventListener('click', () => switchMainView('dashboard'));
+            dom.menuAdmin.addEventListener('click', () => switchMainView('admin'));
+            dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
+            dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
+            dom.btnLogout.addEventListener('click', () => {
+                 showToast("Função Sair não aplicável no modo de pré-visualização.", "error");
+            });
+
+            dom.pautasNav.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-view]');
+                if (btn) switchPautasView(btn.dataset.view);
+            });
+            dom.adminNav.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-view]');
+                if (btn) switchAdminView(btn.dataset.view);
+            });
+
+            dom.adminContent.addEventListener('click', handleAdminContentClick);
+            dom.pautasContent.addEventListener('click', handlePautasContentClick);
+
+            dom.filterPeriodo.addEventListener('change', handleFilterChange);
+            dom.filterFuncionario.addEventListener('change', handleFilterChange);
+            dom.filterCargo.addEventListener('change', handleFilterChange);
+            dom.filterCliente.addEventListener('change', handleFilterChange);
+            dom.filterTarefa.addEventListener('change', handleFilterChange); 
+
+            dom.btnModalClose.addEventListener('click', closeModal);
+            dom.btnModalCancel.addEventListener('click', closeModal);
+            dom.btnModalSave.addEventListener('click', handleModalSave);
+
+            dom.btnCancelDelete.addEventListener('click', () => dom.confirmDeleteModal.classList.add('hidden'));
+            dom.btnConfirmDelete.addEventListener('click', handleConfirmDelete);
+            
+            dom.themeModalClose.addEventListener('click', () => dom.themeModal.classList.add('hidden'));
+            dom.themeQuickSereno.addEventListener('click', () => applyTheme('sereno'));
+            dom.themeQuickSolar.addEventListener('click', () => applyTheme('solar'));
+            dom.themeQuickLaranja.addEventListener('click', () => applyTheme('laranja'));
+            dom.themeReset.addEventListener('click', resetTheme);
+
+            dom.themeColorPicker.addEventListener('input', handleColorChange);
+            dom.themeHexInput.addEventListener('input', handleHexChange);
+            dom.themeFontSelect.addEventListener('change', (e) => applyTheme(null, e.target.value));
+            dom.themeFontSizeDecrease.addEventListener('click', () => adjustFontSize(-1));
+            dom.themeFontSizeIncrease.addEventListener('click', () => adjustFontSize(1));
+        }
+
+        function handleAdminContentClick(e) {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            
+            const action = btn.dataset.action;
+            const id = btn.dataset.id;
+            
+            if (action === 'add') {
+                openModal(state.currentAdminView);
+            } else if (action === 'edit') {
+                openModal(state.currentAdminView, id);
+            } else if (action === 'delete') {
+                openDeleteModal(id, state.currentAdminView);
+            }
+        }
+        
+        function handlePautasContentClick(e) {
+            const target = e.target.closest('[data-action]');
+            if (!target) return;
+            
+            const action = target.dataset.action;
+            const id = target.dataset.id;
+            
+            if (action === 'edit') {
+                openModal('atividade', id);
+            } else if (action === 'delete') {
+                openDeleteModal(id, 'atividade');
+            } else if (action === 'prev-month') {
+                state.currentDate.setMonth(state.currentDate.getMonth() - 1);
+                renderPautas();
+            } else if (action === 'next-month') {
+                state.currentDate.setMonth(state.currentDate.getMonth() + 1);
+                renderPautas();
+            } else if (action === 'prev-week') {
+                state.currentDate.setDate(state.currentDate.getDate() - 7);
+                renderPautas();
+            } else if (action === 'next-week') {
+                state.currentDate.setDate(state.currentDate.getDate() + 7);
+                renderPautas();
+            } else if (action === 'today') {
+                state.currentDate = new Date();
+                renderPautas();
+            }
+        }
+        
+        function handleFilterChange(e) {
+            const id = e.target.id;
+            const value = e.target.value;
+            
+            if (id === 'filter-periodo') {
+                state.filterPeriodo = value;
+                localStorage.setItem('sgap_filterPeriodo', value); // Salvar
+            }
+            if (id === 'filter-funcionario') {
+                state.filterFuncionario = value;
+                localStorage.setItem('sgap_filterFuncionario', value); // Salvar
+            }
+            if (id === 'filter-cargo') {
+                state.filterCargo = value;
+                localStorage.setItem('sgap_filterCargo', value); // Salvar
+            }
+            if (id === 'filter-cliente') {
+                state.filterCliente = value;
+                localStorage.setItem('sgap_filterCliente', value); // Salvar
+            }
+            if (id === 'filter-tarefa') {
+                state.filterTarefa = value; 
+                localStorage.setItem('sgap_filterTarefa', value); // Salvar
+            }
+            
+            render();
+        }
+        
+        // --- Funções de Tema ---
+        
+        function handleColorChange(e) {
+            const newColor = e.target.value;
+            dom.themeHexInput.value = newColor;
+            applyTheme('custom', null, newColor);
+        }
+
+        function handleHexChange(e) {
+            const newHex = e.target.value;
+            if (/^#[0-9A-F]{6}$/i.test(newHex)) {
+                dom.themeColorPicker.value = newHex;
+                applyTheme('custom', null, newHex);
+            }
+        }
+
+        /* getLuminance está no topo */
+
+        function applyTheme(themeName, font, customColor) {
+            const root = document.documentElement;
+            
+            if (themeName) {
+                root.classList.remove('theme-solar', 'theme-laranja', 'theme-custom');
+                if (themeName === 'solar' || themeName === 'laranja') {
+                    root.classList.add(`theme-${themeName}`);
+                } else if (themeName === 'sereno') {
+                    // Padrão
+                } else if (themeName === 'custom' && customColor) {
+                    root.classList.add('theme-custom');
+                }
+                
+                let accentColor;
+                if(themeName === 'solar') accentColor = '#FFC82E';
+                else if(themeName === 'laranja') accentColor = '#F97422';
+                else if(themeName === 'sereno') accentColor = '#648AAE';
+                else accentColor = customColor;
+
+                if (accentColor) {
+                    root.style.setProperty('--color-accent', accentColor);
+                    
+                    const darkColor = shadeColor(accentColor, -20);
+                    const darkerColor = shadeColor(accentColor, -40);
+                    const lightColor = shadeColor(accentColor, 90);
+                    const lighterColor = shadeColor(accentColor, 70);
+
+                    root.style.setProperty('--color-accent-dark', darkColor);
+                    root.style.setProperty('--color-accent-darker', darkerColor);
+                    root.style.setProperty('--color-accent-light', lightColor);
+                    root.style.setProperty('--color-accent-light-hover', lighterColor);
+
+
+                    const luminance = getLuminance(accentColor);
+                    const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF';
+                    root.style.setProperty('--color-accent-text', textColor);
+                    
+                    if(dom.themeColorPicker) dom.themeColorPicker.value = accentColor;
+                    if(dom.themeHexInput) dom.themeHexInput.value = accentColor;
+                }
+                
+                localStorage.setItem('sgap_theme_name', themeName);
+                if (themeName === 'custom') {
+                    localStorage.setItem('sgap_theme_custom_color', customColor);
+                }
+            }
+
+            if (font) {
+                const fontMap = {
+                    'Inter': "'Inter', sans-serif",
+                    'Roboto Slab': "'Roboto Slab', serif",
+                    'Inconsolata': "'Inconsolata', monospace"
+                };
+                const newFontFamily = fontMap[font] || "'Inter', sans-serif";
+                root.style.setProperty('--font-family', newFontFamily);
+                localStorage.setItem('sgap_theme_font', font);
+                if(dom.themeFontSelect) dom.themeFontSelect.value = font;
+            }
+
+            setTimeout(renderDashboard, 50); 
+        }
+        
+        /* shadeColor está no topo */
+
+        function adjustFontSize(delta) {
+            const root = document.documentElement;
+            let currentSize = parseFloat(getComputedStyle(root).fontSize);
+            let newSize = Math.max(12, Math.min(18, currentSize + delta));
+            root.style.fontSize = `${newSize}px`;
+            localStorage.setItem('sgap_theme_fontsize', `${newSize}px`);
+        }
+        
+        function resetTheme() {
+            localStorage.removeItem('sgap_theme_name');
+            localStorage.removeItem('sgap_theme_custom_color');
+            localStorage.removeItem('sgap_theme_font');
+            localStorage.removeItem('sgap_theme_fontsize');
+            
+            document.documentElement.style.fontSize = '15px';
+            applyTheme('sereno', 'Inter');
+        }
+
+        function applyThemeFromLocalStorage() {
+            const themeName = localStorage.getItem('sgap_theme_name') || 'sereno';
+            const font = localStorage.getItem('sgap_theme_font') || 'Inter';
+            const fontSize = localStorage.getItem('sgap_theme_fontsize') || '15px';
+            
+            document.documentElement.style.fontSize = fontSize;
+            
+            let customColor = null;
+            if (themeName === 'custom') {
+                customColor = localStorage.getItem('sgap_theme_custom_color') || '#648AAE';
+            }
+            
+            applyTheme(themeName, font, customColor);
+        }
+        
+        // --- Nova Função: Carregar Estado do LocalStorage ---
+        function loadStateFromLocalStorage() {
+            // Carregar Navegação
+            const savedMainView = localStorage.getItem('sgap_currentMainView');
+            if (savedMainView) state.currentMainView = savedMainView;
+            
+            const savedPautasView = localStorage.getItem('sgap_currentPautasView');
+            if (savedPautasView) state.currentPautasView = savedPautasView;
+
+            const savedAdminView = localStorage.getItem('sgap_currentAdminView');
+            if (savedAdminView) state.currentAdminView = savedAdminView;
+            
+            // Carregar Filtros
+            const savedPeriodo = localStorage.getItem('sgap_filterPeriodo');
+            if (savedPeriodo) state.filterPeriodo = savedPeriodo;
+
+            const savedFunc = localStorage.getItem('sgap_filterFuncionario');
+            if (savedFunc) state.filterFuncionario = savedFunc;
+
+            const savedCargo = localStorage.getItem('sgap_filterCargo');
+            if (savedCargo) state.filterCargo = savedCargo;
+
+            const savedCliente = localStorage.getItem('sgap_filterCliente');
+            if (savedCliente) state.filterCliente = savedCliente;
+
+            const savedTarefa = localStorage.getItem('sgap_filterTarefa');
+            if (savedTarefa) state.filterTarefa = savedTarefa;
+            
+            // Aplicar estado da navegação (botões)
+            if (dom.menuPautas) dom.menuPautas.classList.toggle('menu-btn-active', state.currentMainView === 'pautas');
+            if (dom.menuDashboard) dom.menuDashboard.classList.toggle('menu-btn-active', state.currentMainView === 'dashboard');
+            if (dom.menuAdmin) dom.menuAdmin.classList.toggle('menu-btn-active', state.currentMainView === 'admin');
+
+            if (dom.pautasNav) {
+                Array.from(dom.pautasNav.querySelectorAll('button[data-view]')).forEach(btn => {
+                    btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === state.currentPautasView);
+                    btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== state.currentPautasView);
+                });
+            }
+            if (dom.adminNav) {
+                 Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
+                    btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === state.currentAdminView);
+                    btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== state.currentAdminView);
+                });
+            }
+        }
+
+        // --- Funções do Menu Lateral ---
+        function toggleSidebar() {
+            state.isSidebarMinimized = !state.isSidebarMinimized;
+            localStorage.setItem('sgap_sidebar_minimized', state.isSidebarMinimized ? 'true' : 'false');
+            applySidebarState();
+        }
+        
+        function applySidebarStateFromLocalStorage() {
+            state.isSidebarMinimized = localStorage.getItem('sgap_sidebar_minimized') === 'true';
+            applySidebarState();
+        }
+        
+        function applySidebarState() {
+            const isMinimized = state.isSidebarMinimized;
+            const menu = dom.sidebarMenu;
+            const main = dom.mainContentWrapper;
+            const toggleBtn = dom.sidebarToggleButton;
+            const title = dom.sidebarTitle;
+
+            document.body.classList.toggle('sidebar-minimized', isMinimized);
+
+            menu.classList.toggle('w-64', !isMinimized);
+            menu.classList.toggle('w-20', isMinimized); 
+
+            main.classList.toggle('md:ml-64', !isMinimized);
+            main.classList.toggle('md:ml-20', isMinimized);
+
+            menu.querySelectorAll('.sidebar-text').forEach(text => {
+                text.classList.toggle('hidden', isMinimized);
+            });
+            menu.querySelectorAll('.sidebar-nav-icon').forEach(icon => {
+                icon.classList.toggle('hidden', !isMinimized);
+            });
+            
+            title.classList.toggle('hidden', isMinimized);
+
+            dom.sidebarMenu.querySelectorAll('.menu-btn').forEach(btn => {
+                btn.classList.toggle('justify-center', isMinimized);
+                btn.classList.toggle('justify-start', !isMinimized);
+            });
+            
+            if (dom.userIdDisplayWrapper) {
+                dom.userIdDisplayWrapper.classList.toggle('justify-center', isMinimized);
+                dom.userIdDisplayWrapper.classList.toggle('justify-start', !isMinimized);
+            }
+            
+            if (toggleBtn) {
+                const icon = toggleBtn.querySelector('svg');
+                if (isMinimized) {
+                    icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
+                } else {
+                    icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>';
+                }
+            }
+        }
+
+        // --- Troca de Views ---
+        function switchMainView(view) {
+            state.currentMainView = view;
+            
+            dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
+            dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
+            dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
+            
+            dom.menuTema.classList.remove('menu-btn-active');
+            dom.btnLancarAtividadeMenu.classList.remove('menu-btn-active');
+
+            dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
+            dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
+            dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
+            
+            if (window.innerWidth < 768) {
+                dom.sidebarMenu.classList.add('-translate-x-full');
+            }
+            
+            render();
+            localStorage.setItem('sgap_currentMainView', view); // Salvar
+        }
+
+        function switchPautasView(view) {
+            state.currentPautasView = view;
+            Array.from(dom.pautasNav.querySelectorAll('button[data-view]')).forEach(btn => {
+                btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
+                btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
+            });
+            renderPautas();
+            localStorage.setItem('sgap_currentPautasView', view); // Salvar
+        }
+
+        function switchAdminView(view) {
+            state.currentAdminView = view;
+             Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
+                btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
+                btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
+            });
+            renderAdmin();
+            localStorage.setItem('sgap_currentAdminView', view); // Salvar
+        }
+
+        // --- Renderização Principal ---
+        function render() {
+            if (!state.isAuthReady) return;
+
+            renderFiltros(); 
+
+            if (state.currentMainView === 'pautas') {
+                renderPautas();
+            } else if (state.currentMainView === 'dashboard') {
+                renderDashboard();
+            } else if (state.currentMainView === 'admin') {
+                renderAdmin();
+            }
+        }
+        
+        function renderAdmin() {
+            if (!dom.adminContent) return;
+            if (state.currentAdminView === 'funcionarios') {
+                renderAdminFuncionarios();
+            } else if (state.currentAdminView === 'cargos') {
+                renderAdminCargos();
+            } else if (state.currentAdminView === 'clientes') {
+                renderAdminClientes();
+            } else if (state.currentAdminView === 'tarefas') {
+                renderAdminTarefas();
+            }
+        }
+
+        // --- Funções de Renderização de Pautas ---
+
+        function renderFiltros() {
+            if (!dom.filterFuncionario) return; 
+
+            // Alterado: Ler do 'state' (que foi carregado do localStorage)
+            const selPeriodo = state.filterPeriodo;
+            const selFunc = state.filterFuncionario;
+            const selCargo = state.filterCargo;
+            const selCliente = state.filterCliente;
+            const selTarefa = state.filterTarefa;
+            
+            let funcOptions = '<option value="todos">Todos Funcionários</option>';
+            state.funcionarios.forEach(f => {
+                funcOptions += `<option value="${f.id}">${f.nome}</option>`;
+            });
+            dom.filterFuncionario.innerHTML = funcOptions;
+            
+            let cargoOptions = '<option value="todos">Todos Cargos</option>';
+            state.cargos.forEach(c => {
+                cargoOptions += `<option value="${c.id}">${c.nome}</option>`;
+            });
+            dom.filterCargo.innerHTML = cargoOptions;
+            
+            let clienteOptions = '<option value="todos">Todos Clientes</option>';
+            state.clientes.forEach(c => {
+                clienteOptions += `<option value="${c.id}">${c.nome}</option>`;
+            });
+            dom.filterCliente.innerHTML = clienteOptions;
+            
+            let tarefaOptions = '<option value="todos">Todas Tarefas</option>';
+            state.tarefasPadrao.forEach(t => {
+                tarefaOptions += `<option value="${t.nome}">${t.nome}</option>`;
+            });
+            dom.filterTarefa.innerHTML = tarefaOptions;
+
+            // Restaurar seleção a partir do 'state'
+            dom.filterPeriodo.value = selPeriodo;
+            dom.filterFuncionario.value = selFunc;
+            dom.filterCargo.value = selCargo;
+            dom.filterCliente.value = selCliente;
+            dom.filterTarefa.value = selTarefa;
+        }
+
+        function getFilteredAtividades() {
+            let agora = new Date(); 
+            let atividadesFiltradas = state.atividades;
+        
+            if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard') {
+                if (state.filterPeriodo === 'hoje') {
+                    const hojeStr = agora.toISOString().split('T')[0];
+                    atividadesFiltradas = atividadesFiltradas.filter(at => {
+                        if (!at.data) return false;
+                        return at.data === hojeStr;
+                    });
+                } else if (state.filterPeriodo === 'semana') {
+                    const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+                    const diaDaSemana = hoje.getDay(); 
+                    
+                    const inicioSemana = new Date(hoje.getTime());
+                    inicioSemana.setDate(hoje.getDate() - diaDaSemana);
+                    inicioSemana.setHours(0, 0, 0, 0); 
+    
+                    const fimSemana = new Date(inicioSemana.getTime());
+                    fimSemana.setDate(inicioSemana.getDate() + 6);
+                    fimSemana.setHours(23, 59, 59, 999); 
+    
+                    atividadesFiltradas = atividadesFiltradas.filter(at => {
+                        if (!at.data) return false;
+                        const dataAt = new Date(at.data + 'T12:00:00'); 
+                        return dataAt >= inicioSemana && dataAt <= fimSemana;
+                    });
+                } 
+            }
+
+            if (state.filterCargo !== 'todos') {
+                let funcionariosFiltradosPorCargo = [];
+                funcionariosFiltradosPorCargo = state.funcionarios
+                    .filter(f => f.cargoId === state.filterCargo)
+                    .map(f => f.id);
+                    
+                atividadesFiltradas = atividadesFiltradas.filter(at => 
+                    funcionariosFiltradosPorCargo.includes(at.funcionarioId)
+                );
+            }
+            
+            if (state.filterFuncionario !== 'todos') {
+                atividadesFiltradas = atividadesFiltradas.filter(at => 
+                    at.funcionarioId === state.filterFuncionario
+                );
+            }
+            
+            if (state.filterCliente !== 'todos') {
+                atividadesFiltradas = atividadesFiltradas.filter(at => 
+                    at.clienteId === state.filterCliente
+                );
+            }
+
+            if (state.filterTarefa !== 'todos') {
+                atividadesFiltradas = atividadesFiltradas.filter(at => 
+                    at.titulo === state.filterTarefa
+                );
+            }
+            
+            return atividadesFiltradas;
+        }
+        
+        function getStatusCardClasses(status) {
+            const statusMap = {
+                'Concluído': 'bg-green-100 text-green-800 hover:bg-green-200',
+                'Em Andamento': 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)] hover:bg-[var(--color-accent-light-hover)]',
+                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', 
+                'Bloqueado': 'bg-red-100 text-red-800 hover:bg-red-200',
+                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+            };
+            
+            return statusMap[status] || statusMap['default'];
+        }
+
+        function renderPautas() {
+            if (!dom.pautasContent) return;
+            if (state.currentPautasView === 'calendario') {
+                renderCalendario();
+            } else if (state.currentPautasView === 'semana') {
+                renderSemana();
+            } else if (state.currentPautasView === 'lista') {
+                renderLista();
+            }
+        }
+
+        function renderCalendario() {
+            const month = state.currentDate.getMonth();
+            const year = state.currentDate.getFullYear();
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            
+            const monthName = state.currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+            
+            const atividadesFiltradas = getFilteredAtividades();
+            const atividadesDoMes = atividadesFiltradas.filter(at => {
+                if (!at.data) return false;
+                const dataAt = new Date(at.data + 'T12:00:00');
+                return dataAt.getMonth() === month && dataAt.getFullYear() === year;
+            });
+            
+            const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+            
+            let html = `<div class="p-4 bg-[var(--color-card)] rounded-lg shadow-sm">`;
+            html += `<div class="flex justify-between items-center mb-4">
+                <button data-action="prev-month" class="btn-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                <button data-action="today" class="btn-secondary">Hoje</button>
+                <h2 class="text-xl font-semibold capitalize">${monthName}</h2>
+                <button data-action="next-month" class="btn-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </button>
+            </div>`;
+            
+            html += `<div class="grid grid-cols-7 gap-1 text-center font-bold">`;
+            diasSemana.forEach(dia => html += `<div class="p-2 bg-[var(--color-bg-alt)] rounded-md text-sm text-[var(--color-text-secondary)]">${dia}</div>`);
+            html += `</div>`;
+            
+            html += `<div class="grid grid-cols-7 gap-1 mt-1">`;
+            
+            for (let i = 0; i < firstDay; i++) {
+                html += `<div class="border rounded-md bg-stone-50 min-h-[100px]"></div>`;
+            }
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                const diaAtual = new Date(year, month, day);
+                const hoje = new Date();
+                const isHoje = diaAtual.toDateString() === hoje.toDateString();
+                
+                const atividadesDoDia = atividadesDoMes.filter(at => {
+                    const dataAt = new Date(at.data + 'T12:00:00');
+                    return dataAt.getDate() === day;
+                });
+                
+                html += `<div class="${isHoje ? 'bg-[var(--color-accent-light)]' : 'bg-[var(--color-card)]'} border rounded-md min-h-[120px] p-1.5 flex flex-col">`;
+                html += `<span class="font-semibold ${isHoje ? 'text-[var(--color-accent-dark)]' : 'text-[var(--color-text-primary)]'}">${day}</span>`;
+                html += `<div class="flex-grow overflow-y-auto space-y-0.5 mt-1">`;
+                
+                atividadesDoDia.forEach(at => {
+                    const func = state.funcionarios.find(f => f.id === at.funcionarioId);
+                    const cliente = state.clientes.find(c => c.id === at.clienteId);
+                    const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
+                    
+                    html += `
+                        <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
+                             data-action="edit" data-id="${at.id}">
+                            <strong class="block truncate">${at.titulo}</strong>
+                            <span class="block opacity-80 truncate">${func ? func.nome : '...'}</span>
+                            <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                        </div>`;
+                });
+                
+                html += `</div></div>`;
+            }
+            html += `</div></div>`;
+            
+            dom.pautasContent.innerHTML = html;
+        }
+
+        function renderSemana() {
+            const diasSemanaLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+            const diasDaSemanaArray = [];
+            const hoje = new Date();
+            const hojeKey = hoje.toISOString().split('T')[0];
+
+            const diaDaSemanaAtual = state.currentDate.getDay(); 
+            const inicioSemana = new Date(state.currentDate.getFullYear(), state.currentDate.getMonth(), state.currentDate.getDate() - diaDaSemanaAtual);
+            inicioSemana.setHours(0, 0, 0, 0);
+
+            const fimSemana = new Date(inicioSemana.getTime());
+            fimSemana.setDate(inicioSemana.getDate() + 6);
+            fimSemana.setHours(23, 59, 59, 999);
+            
+            const getKey = (date) => date.toISOString().split('T')[0];
+            
+            for (let i = 0; i < 7; i++) {
+                const diaAtual = new Date(inicioSemana.getTime());
+                diaAtual.setDate(inicioSemana.getDate() + i);
+                
+                diasDaSemanaArray.push({
+                    key: getKey(diaAtual),
+                    label: diasSemanaLabels[i],
+                    dayNum: diaAtual.getDate(),
+                    monthNum: diaAtual.getMonth() + 1,
+                    isHoje: getKey(diaAtual) === hojeKey,
+                });
+            }
+
+            const atividadesFiltradas = getFilteredAtividades(); 
+            const atividadesDaSemana = atividadesFiltradas.filter(at => {
+                if (!at.data) return false;
+                const dataAt = new Date(at.data + 'T12:00:00');
+                return dataAt >= inicioSemana && dataAt <= fimSemana;
+            });
+
+            let funcionariosParaExibir = [...state.funcionarios];
+            if (state.filterCargo !== 'todos') {
+                funcionariosParaExibir = funcionariosParaExibir.filter(f => f.cargoId === state.filterCargo);
+            }
+            if (state.filterFuncionario !== 'todos') {
+                funcionariosParaExibir = funcionariosParaExibir.filter(f => f.id === state.filterFuncionario);
+            }
+            
+            const formatOptions = { day: 'numeric', month: 'short' };
+            const inicioStr = inicioSemana.toLocaleDateString('pt-BR', formatOptions);
+            const fimStr = fimSemana.toLocaleDateString('pt-BR', formatOptions);
+            const anoStr = inicioSemana.getFullYear();
+
+            let html = `<div class="bg-[var(--color-card)] rounded-lg shadow-sm">`;
+            html += `<div class="flex justify-between items-center mb-4 p-4 border-b">
+                <button data-action="prev-week" class="btn-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                <button data-action="today" class="btn-secondary">Hoje</button>
+                <h2 class="text-xl font-semibold capitalize text-center">${inicioStr} - ${fimStr}, ${anoStr}</h2>
+                <button data-action="next-week" class="btn-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </button>
+            </div>`;
+
+            html += `<div class="overflow-x-auto">`;
+            html += `<div class="grid min-w-[1200px]" style="grid-template-columns: 180px repeat(7, minmax(140px, 1fr));">`;
+            
+            html += `<div class="p-2 font-bold bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 left-0 z-20">Funcionário</div>`;
+            diasDaSemanaArray.forEach(dia => {
+                html += `<div class="p-2 font-bold text-center ${dia.isHoje ? 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)]' : 'bg-[var(--color-bg-alt)]'} border-b border-r border-stone-200 sticky top-0 z-10">
+                    ${dia.label}
+                    <span class="block text-lg font-bold ${dia.isHoje ? 'text-[var(--color-accent-darker)]' : 'text-[var(--color-text-primary)]'}">${dia.dayNum}/${String(dia.monthNum).padStart(2, '0')}</span>
+                </div>`;
+            });
+
+            if (funcionariosParaExibir.length === 0) {
+                 html += `<div class="col-span-8 p-10 text-center text-stone-500">
+                    Nenhum funcionário encontrado para os filtros selecionados.
+                 </div>`;
+            }
+
+            funcionariosParaExibir.forEach(func => {
+                html += `<div class="p-2 border-b border-r border-stone-200 sticky left-0 bg-[var(--color-card)] z-10 flex flex-col items-center justify-center">
+                    <img src="${func.fotoUrl || 'https://placehold.co/60x60/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-12 h-12 rounded-full object-cover mb-1">
+                    <span class="text-sm font-medium text-center truncate w-full">${func.nome}</span>
+                </div>`;
+                
+                diasDaSemanaArray.forEach(dia => {
+                    const cellAtividades = atividadesDaSemana.filter(at => 
+                        at.funcionarioId === func.id && at.data === dia.key
+                    );
+                    
+                    html += `<div class="${dia.isHoje ? 'bg-stone-50' : 'bg-[var(--color-card)]'} border-b border-r border-stone-200 min-h-[100px] p-1.5 flex flex-col">`;
+                    html += `<div class="flex-grow overflow-y-auto space-y-0.5 mt-1 pr-1">`;
+
+                    cellAtividades.forEach(at => {
+                        const cliente = state.clientes.find(c => c.id === at.clienteId);
+                        const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
+                        
+                        html += `
+                            <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
+                                 data-action="edit" data-id="${at.id}">
+                                <strong class="block truncate">${at.titulo}</strong>
+                                <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                            </div>`;
+                    });
+
+                    html += `</div></div>`;
+                });
+            });
+
+            html += `</div></div></div>`; 
+            
+            dom.pautasContent.innerHTML = html;
+        }
+
+        function renderLista() {
+            const atividades = getFilteredAtividades();
+            let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Data</th>
+                            <th class="table-header">Atividade</th>
+                            <th class="table-header">Funcionário</th>
+                            <th class="table-header">Cargo</th>
+                            <th class="table-header">Cliente</th>
+                            <th class="table-header">Status</th>
+                            <th class="table-header text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+            
+            if (atividades.length === 0) {
+                html += `<tr><td colspan="7" class="px-6 py-4 text-center text-stone-500">Nenhuma atividade encontrada para os filtros selecionados.</td></tr>`;
+            }
+
+            atividades.sort((a, b) => new Date(a.data) - new Date(b.data));
+
+            atividades.forEach(at => {
+                const func = state.funcionarios.find(f => f.id === at.funcionarioId);
+                const cargo = state.cargos.find(c => c.id === func?.cargoId);
+                const cliente = state.clientes.find(c => c.id === at.clienteId);
+                
+                html += `
+                    <tr>
+                        <td class="table-cell">${new Date(at.data + 'T12:00:00').toLocaleDateString('pt-BR')}</td>
+                        <td class="table-cell font-medium text-stone-900">${at.titulo}</td>
+                        <td class="table-cell">${func ? func.nome : 'N/A'}</td>
+                        <td class="table-cell">${cargo ? cargo.nome : 'N/A'}</td>
+                        <td class="table-cell">${cliente ? cliente.nome : 'N/A'}</td>
+                        <td class="table-cell">${at.status || 'Pendente'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            <button data-action="edit" data-id="${at.id}" class="btn-link">Editar</button>
+                            <button data-action="delete" data-id="${at.id}" class="btn-link-danger">Excluir</button>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.pautasContent.innerHTML = html;
+        }
+
+        // --- Fim das Funções de Pautas ---
+
+        function renderDashboard() {
+            if (!dom.dashboardContent) return;
+
+            const atividades = getFilteredAtividades(); 
+            const totalAtividades = atividades.length;
+
+            const statusCounts = { 'Pendente': 0, 'Em Andamento': 0, 'Concluído': 0, 'Bloqueado': 0 };
+            let totalConcluidas = 0; 
+            
+            atividades.forEach(at => {
+                const status = at.status || 'Pendente';
+                if (statusCounts.hasOwnProperty(status)) {
+                    statusCounts[status]++;
+                }
+                if (at.status === 'Concluído') {
+                    totalConcluidas++;
+                }
+            });
+            const statusLabels = Object.keys(statusCounts);
+            const statusData = Object.values(statusCounts);
+            
+            const statusColors = {
+                'Pendente': '#F97422', 
+                'Em Andamento': '#10B981', // Verde
+                'Concluído': 'var(--color-accent)', // Cor do Tema
+                'Bloqueado': '#EF4444'   
+            };
+            
+            const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
+            const percentagemRestante = 100 - percentagemConcluidas;
+
+            const tarefaProgress = [];
+            state.tarefasPadrao.forEach(tarefa => {
+                const taskName = tarefa.nome;
+                let totalParaTarefa = 0;
+                let concluidasParaTarefa = 0;
+
+                atividades.forEach(at => {
+                    if (at.titulo === taskName) {
+                        totalParaTarefa++;
+                        if (at.status === 'Concluído') {
+                            concluidasParaTarefa++;
+                        }
+                    }
+                });
+
+                const percentage = (totalParaTarefa === 0) ? 0 : Math.round((concluidasParaTarefa / totalParaTarefa) * 100);
+                
+                tarefaProgress.push({
+                    nome: taskName,
+                    percentage: percentage,
+                    total: totalParaTarefa,
+                    concluidas: concluidasParaTarefa
+                });
+            });
+
+
+            dom.dashboardContent.innerHTML = `
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Status Geral das Atividades</h2>
+                        <p class="mb-4 text-stone-600">Total de atividades (com filtros): <strong>${totalAtividades}</strong></p>
+                        
+                        <div class="flex flex-col md:flex-row justify-around items-center gap-6">
+                            
+                            <div class="max-w-xs w-full"> 
+                                <h3 class="text-center font-medium text-stone-600 mb-2">Por Etapa</h3>
+                                <div class="relative max-w-[280px] mx-auto">
+                                    <canvas id="statusPieChart"></canvas>
+                                </div>
+                            </div>
+                            
+                            <div class="max-w-xs w-full">
+                                <h3 class="text-center font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
+                                <div class="relative max-w-[200px] mx-auto">
+                                    <canvas id="pautaDoughnutChart"></canvas>
+                                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <span class="text-3xl font-bold text-[var(--color-accent-dark)]">${Math.round(percentagemConcluidas)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Progresso por Tarefa Padrão</h2>
+                        <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-96 pr-2">
+                            ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
+                                const gradient = `conic-gradient(var(--color-accent) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
+                                
+                                return `
+                                <div class="flex flex-col items-center">
+                                    <div class="relative w-24 h-24 rounded-full flex items-center justify-center" style="background: ${gradient};">
+                                        <div class="w-20 h-20 bg-[var(--color-card)] rounded-full flex items-center justify-center shadow-inner">
+                                            <span class="text-xl font-bold text-[var(--color-accent-dark)]">${task.percentage}%</span>
+                                        </div>
+                                    </div>
+                                    <span class="mt-2 text-sm font-medium text-stone-700 text-center truncate w-full" title="${task.nome}">${task.nome}</span>
+                                    <span class="text-xs text-stone-500">${task.concluidas} / ${task.total} ativ.</span>
+                                </div>
+                                `;
+                            }).join('') : '<p class="text-stone-500 col-span-full text-center">Nenhuma tarefa padrão encontrada com atividades nos filtros atuais.</p>'}
+                        </div>
+                    </div>
+                </div>`;
+
+            const rootStyle = getComputedStyle(document.documentElement);
+            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family').trim() || "'Inter', sans-serif";
+            Chart.defaults.font.size = 12;
+
+            const ctxPie = document.getElementById('statusPieChart')?.getContext('2d');
+            if (state.dashboardChart) state.dashboardChart.destroy(); 
+            
+            if (ctxPie) {
+                state.dashboardChart = new Chart(ctxPie, {
+                    type: 'pie',
+                    data: {
+                        labels: statusLabels,
+                        datasets: [{
+                            data: statusData,
+                            backgroundColor: [
+                                statusColors['Pendente'],
+                                statusColors['Em Andamento'],
+                                statusColors['Concluído'],
+                                statusColors['Bloqueado']
+                            ],
+                            borderColor: 'var(--color-card)',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: { position: 'top' },
+                            tooltip: {
+                                callbacks: {
+                                    label: (context) => {
+                                        const label = context.label || '';
+                                        const value = context.raw;
+                                        const percentage = totalAtividades > 0 ? (value / totalAtividades * 100).toFixed(1) : 0;
+                                        return `${label}: ${value} (${percentage}%)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            const ctxDoughnut = document.getElementById('pautaDoughnutChart')?.getContext('2d');
+            if (state.dashboardDoughnutChart) state.dashboardDoughnutChart.destroy(); 
+            
+            if (ctxDoughnut) {
+                state.dashboardDoughnutChart = new Chart(ctxDoughnut, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Concluído', 'Restante'],
+                        datasets: [{
+                            data: [percentagemConcluidas, percentagemRestante],
+                            backgroundColor: [
+                                'var(--color-accent)', 
+                                '#e5e7eb'  
+                            ],
+                            borderColor: '#E5E7EB', // Alterado para cinza claro
+                            borderWidth: 2,
+                            hoverBorderWidth: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        cutout: '75%', 
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { 
+                                enabled: true,
+                                callbacks: {
+                                    label: (context) => {
+                                        const label = context.label || '';
+                                        const value = context.raw;
+                                        return ` ${label}: ${value.toFixed(1)}%`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+
+        function renderAdminFuncionarios() {
+            let html = `<div class="flex justify-end mb-4">
+                <button data-action="add" class="btn-primary">
+                    Adicionar Funcionário
+                </button>
+            </div>`;
+            
+            html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Nome</th>
+                            <th class="table-header">Foto</th>
+                            <th class="table-header">Email</th>
+                            <th class="table-header">Cargo</th>
+                            <th class="table-header text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+
+            if (state.funcionarios.length === 0) {
+                html += `<tr><td colspan="5" class="px-6 py-4 text-center text-stone-500">Nenhum funcionário cadastrado.</td></tr>`;
+            }
+
+            state.funcionarios.forEach(func => {
+                const cargo = state.cargos.find(c => c.id === func.cargoId);
+                html += `
+                    <tr>
+                        <td class="table-cell font-medium text-stone-900">${func.nome}</td>
+                        <td class="table-cell">
+                            <img src="${func.fotoUrl || 'https://placehold.co/40x40/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-10 h-10 rounded-full object-cover">
+                        </td>
+                        <td class="table-cell">${func.email || 'N/A'}</td>
+                        <td class="table-cell">${cargo ? cargo.nome : 'Sem cargo'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            <button data-action="edit" data-id="${func.id}" class="btn-link">Editar</button>
+                            <button data-action="delete" data-id="${func.id}" class="btn-link-danger">Excluir</button>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.adminContent.innerHTML = html;
+        }
+
+        function renderAdminCargos() {
+            let html = `<div class="flex justify-end mb-4">
+                <button data-action="add" class="btn-primary">Adicionar Cargo</button>
+            </div>`;
+            
+            html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Nome do Cargo</th>
+                            <th class="table-header text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+
+            if (state.cargos.length === 0) {
+                html += `<tr><td colspan="2" class="px-6 py-4 text-center text-stone-500">Nenhum cargo cadastrado.</td></tr>`;
+            }
+
+            state.cargos.forEach(cargo => {
+                html += `
+                    <tr>
+                        <td class="table-cell font-medium text-stone-900">${cargo.nome}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            <button data-action="edit" data-id="${cargo.id}" class="btn-link">Editar</button>
+                            <button data-action="delete" data-id="${cargo.id}" class="btn-link-danger">Excluir</button>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.adminContent.innerHTML = html;
+        }
+        
+        function renderAdminClientes() {
+            let html = `<div class="flex justify-end mb-4">
+                <button data-action="add" class="btn-primary">Adicionar Cliente</button>
+            </div>`;
+            
+            html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Nome do Cliente</th>
+                            <th class="table-header text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+
+            if (state.clientes.length === 0) {
+                html += `<tr><td colspan="2" class="px-6 py-4 text-center text-stone-500">Nenhum cliente cadastrado.</td></tr>`;
+            }
+
+            state.clientes.forEach(cliente => {
+                html += `
+                    <tr>
+                        <td class="table-cell font-medium text-stone-900">${cliente.nome}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            <button data-action="edit" data-id="${cliente.id}" class="btn-link">Editar</button>
+                            <button data-action="delete" data-id="${cliente.id}" class="btn-link-danger">Excluir</button>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.adminContent.innerHTML = html;
+        }
+
+        function renderAdminTarefas() {
+            let html = `<div class="flex justify-end mb-4">
+                <button data-action="add" class="btn-primary">Adicionar Tarefa Padrão</button>
+            </div>`;
+            
+            html += `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-stone-200">
+                    <thead class="bg-[var(--color-bg-alt)]">
+                        <tr>
+                            <th class="table-header">Nome da Tarefa</th>
+                            <th class="table-header text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+
+            if (state.tarefasPadrao.length === 0) {
+                html += `<tr><td colspan="2" class="px-6 py-4 text-center text-stone-500">Nenhuma tarefa padrão cadastrada.</td></tr>`;
+            }
+            
+            state.tarefasPadrao.forEach(tarefa => {
+                html += `
+                    <tr>
+                        <td class="table-cell font-medium text-stone-900">${tarefa.nome}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            <button data-action="edit" data-id="${tarefa.id}" class="btn-link">Editar</button>
+                            <button data-action="delete" data-id="${tarefa.id}" class="btn-link-danger">Excluir</button>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            dom.adminContent.innerHTML = html;
+        }
+
+        // --- Modals ---
+        async function openModal(type, id = null) {
+            state.editingId = id;
+            state.editingCollection = type;
+            dom.modalLoading.classList.remove('hidden');
+            dom.modalContent.innerHTML = '';
+            
+            let title = '';
+            let html = '';
+
+            await new Promise(res => setTimeout(res, 50));
+
+            if (type === 'atividade') {
+                title = id ? 'Editar Atividade' : 'Lançar Atividade';
+                const at = id ? state.atividades.find(a => a.id === id) : {};
+                const funcOptions = state.funcionarios.map(f => `<option value="${f.id}" ${at?.funcionarioId === f.id ? 'selected' : ''}>${f.nome}</option>`).join('');
+                const clienteOptions = state.clientes.map(c => `<option value="${c.id}" ${at?.clienteId === c.id ? 'selected' : ''}>${c.nome}</option>`).join('');
+                const statusOptions = ['Pendente', 'Em Andamento', 'Concluído', 'Bloqueado']
+                    .map(s => `<option value="${s}" ${at?.status === s ? 'selected' : ''}>${s}</option>`).join('');
+                const tarefaOptions = state.tarefasPadrao.map(t => `<option value="${t.nome}">${t.nome}</option>`).join('');
+
+
+                html = `
+                    <form id="modal-form" class="space-y-4">
+                        <div>
+                            <label for="tarefaPadrao" class="block text-sm font-medium text-stone-700">Tarefa Padrão (Opcional)</label>
+                            <select id="tarefaPadrao" name="tarefaPadrao" class="form-select">
+                                <option value="">Selecione uma tarefa...</option>
+                                ${tarefaOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="titulo" class="block text-sm font-medium text-stone-700">Título da Atividade</label>
+                            <input type="text" id="titulo" name="titulo" value="${at.titulo || ''}" class="form-input" required>
+                        </div>
+                        <div>
+                            <label for="data" class="block text-sm font-medium text-stone-700">Data</label>
+                            <input type="date" id="data" name="data" value="${at.data || new Date().toISOString().split('T')[0]}" class="form-input" required>
+                        </div>
+                        <div>
+                            <label for="clienteId" class="block text-sm font-medium text-stone-700">Cliente</label>
+                            <select id="clienteId" name="clienteId" class="form-select">
+                                <option value="">Selecione...</option>
+                                ${clienteOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="funcionarioId" class="block text-sm font-medium text-stone-700">Funcionário</label>
+                            <select id="funcionarioId" name="funcionarioId" class="form-select" required>
+                                <option value="">Selecione...</option>
+                                ${funcOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="status" class="block text-sm font-medium text-stone-700">Status</label>
+                            <select id="status" name="status" class="form-select">
+                                ${statusOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="observacoes" class="block text-sm font-medium text-stone-700">Descrição / Observações</label>
+                            <textarea id="observacoes" name="observacoes" rows="3" class="form-input">${at.observacoes || ''}</textarea>
+                        </div>
+                    </form>`;
+            } 
+            else if (type === 'funcionarios') {
+                title = id ? 'Editar Funcionário' : 'Adicionar Funcionário';
+                const func = id ? state.funcionarios.find(f => f.id === id) : {};
+                const cargoOptions = state.cargos.map(c => `<option value="${c.id}" ${func?.cargoId === c.id ? 'selected' : ''}>${c.nome}</option>`).join('');
+                
+                html = `
+                    <form id="modal-form" class="space-y-4">
+                        <div>
+                            <label for="nome" class="block text-sm font-medium text-stone-700">Nome Completo</label>
+                            <input type="text" id="nome" name="nome" value="${func.nome || ''}" class="form-input" required>
+                        </div>
+                        <div>
+                            <label for="email" class="block text-sm font-medium text-stone-700">Email</label>
+                            <input type="email" id="email" name="email" value="${func.email || ''}" class="form-input">
+                        </div>
+                        
+                        <div>
+                            <label for="fotoFile" class="block text-sm font-medium text-stone-700">Foto</label>
+                            ${func.fotoUrl ? `<img src="${func.fotoUrl}" alt="Foto atual" class="w-20 h-20 rounded-full object-cover my-2 shadow-md">` : '<div class="w-20 h-20 rounded-full bg-stone-100 flex items-center justify-center my-2 border"><svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg></div>'}
+                            <input type="file" id="fotoFile" name="fotoFile" class="mt-1 block w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[var(--color-accent-light)] file:text-[var(--color-accent-dark)] hover:file:bg-[var(--color-accent-light-hover)] file:cursor-pointer" accept="image/png, image/jpeg">
+                            <input type="hidden" id="fotoUrl" name="fotoUrl" value="${func.fotoUrl || ''}">
+                            <p class="text-xs text-stone-500 mt-1">Envie um ficheiro (PNG, JPG). Deixe em branco para manter a foto atual.</p>
+                        </div>
+                        
+                        <div>
+                            <label for="cargoId" class="block text-sm font-medium text-stone-700">Cargo</label>
+                            <select id="cargoId" name="cargoId" class="form-select" required>
+                                <option value="">Selecione...</option>
+                                ${cargoOptions}
+                            </select>
+                        </div>
+                    </form>`;
+            }
+            else if (type === 'cargos') {
+                title = id ? 'Editar Cargo' : 'Adicionar Cargo';
+                const cargo = id ? state.cargos.find(c => c.id === id) : {};
+                html = `
+                    <form id="modal-form" class="space-y-4">
+                        <div>
+                            <label for="nome" class="block text-sm font-medium text-stone-700">Nome do Cargo</label>
+                            <input type="text" id="nome" name="nome" value="${cargo.nome || ''}" class="form-input" required>
+                        </div>
+                    </form>`;
+            }
+            else if (type === 'clientes') {
+                title = id ? 'Editar Cliente' : 'Adicionar Cliente';
+                const cliente = id ? state.clientes.find(c => c.id === id) : {};
+                html = `
+                    <form id="modal-form" class="space-y-4">
+                        <div>
+                            <label for="nome" class="block text-sm font-medium text-stone-700">Nome do Cliente</label>
+                            <input type="text" id="nome" name="nome" value="${cliente.nome || ''}" class="form-input" required>
+                        </div>
+                    </form>`;
+            }
+            else if (type === 'tarefas') {
+                title = id ? 'Editar Tarefa Padrão' : 'Adicionar Tarefa Padrão';
+                const tarefa = id ? state.tarefasPadrao.find(t => t.id === id) : {};
+                html = `
+                    <form id="modal-form" class="space-y-4">
+                        <div>
+                            <label for="nome" class="block text-sm font-medium text-stone-700">Nome da Tarefa</label>
+                            <input type="text" id="nome" name="nome" value="${tarefa.nome || ''}" class="form-input" required>
+                        </div>
+                    </form>`;
+            }
+
+            dom.modalTitle.textContent = title;
+            dom.modalContent.innerHTML = html;
+            dom.modalLoading.classList.add('hidden');
+            dom.modal.classList.remove('hidden');
+
+            if (type === 'atividade') {
+                const selectTarefa = document.getElementById('tarefaPadrao');
+                const inputTitulo = document.getElementById('titulo');
+                if (selectTarefa && inputTitulo) {
+                    selectTarefa.addEventListener('change', (e) => {
+                        if (e.target.value) {
+                            inputTitulo.value = e.target.value;
+                        }
+                    });
+                }
+            }
+        }
+
+        function closeModal() {
+            dom.modal.classList.add('hidden');
+            state.editingId = null;
+            state.editingCollection = null;
+        }
+
+        async function handleModalSave() {
+            const form = document.getElementById('modal-form');
+            if (!form.reportValidity()) return;
+
+            dom.btnModalSave.disabled = true;
+            dom.btnModalSave.innerHTML = 'Salvando...';
+
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            
+            let collection;
+            let fileToUpload = null;
+            let existingFotoUrl = data.fotoUrl || ""; 
+
+            if (state.editingCollection === 'atividade') collection = atividadesCollection;
+            if (state.editingCollection === 'funcionarios') {
+                collection = funcionariosCollection;
+                const fotoFileInput = document.getElementById('fotoFile');
+                if (fotoFileInput && fotoFileInput.files.length > 0) {
+                    fileToUpload = fotoFileInput.files[0];
+                }
+                delete data.fotoFile; 
+            }
+            if (state.editingCollection === 'cargos') collection = cargosCollection;
+            if (state.editingCollection === 'clientes') collection = clientesCollection;
+            if (state.editingCollection === 'tarefas') collection = tarefasPadraoCollection;
+
+            if (!collection) {
+                showToast('Erro: Tipo de coleção desconhecido.', 'error');
+                dom.btnModalSave.disabled = false;
+                dom.btnModalSave.innerHTML = 'Salvar';
+                return;
+            }
+
+            try {
+                if (fileToUpload) {
+                    dom.btnModalSave.innerHTML = 'Enviando foto...';
+                    const storageRef = ref(storage, `funcionarios_fotos/${userId}_${Date.now()}_${fileToUpload.name}`);
+                    const snapshot = await uploadBytes(storageRef, fileToUpload);
+                    const downloadURL = await getDownloadURL(snapshot.ref);
+                    data.fotoUrl = downloadURL; 
+                } else {
+                    data.fotoUrl = existingFotoUrl; 
+                }
+
+                if (state.editingId) {
+                    const docRef = doc(db, collection.path, state.editingId);
+                    await updateDoc(docRef, data);
+                    showToast('Item atualizado com sucesso!', 'success');
+                } else {
+                    await addDoc(collection, data);
+                    showToast('Item salvo com sucesso!', 'success');
+                }
+                closeModal();
+            } catch (error) {
+                console.error("Erro ao salvar:", error);
+                showToast(`Erro ao salvar: ${error.message}`, 'error');
+            } finally {
+                dom.btnModalSave.disabled = false;
+                dom.btnModalSave.innerHTML = 'Salvar';
+            }
+        }
+        
+        function openDeleteModal(id, collection) {
+            state.editingId = id;
+            state.editingCollection = collection;
+            dom.confirmDeleteModal.classList.remove('hidden');
+        }
+        
+        async function handleConfirmDelete() {
+            if (!state.editingId || !state.editingCollection) return;
+            
+            let collectionPath;
+            if (state.editingCollection === 'atividade') collectionPath = atividadesPath;
+            if (state.editingCollection === 'funcionarios') collectionPath = funcionariosPath;
+            if (state.editingCollection === 'cargos') collectionPath = cargosPath;
+            if (state.editingCollection === 'clientes') collectionPath = clientesPath;
+            if (state.editingCollection === 'tarefas') collectionPath = tarefasPadraoPath;
+
+            if (!collectionPath) {
+                showToast('Erro: Coleção desconhecida.', 'error');
+                return;
+            }
+
+            try {
+                const docRef = doc(db, collectionPath, state.editingId);
+                await deleteDoc(docRef);
+                showToast('Item excluído com sucesso.', 'success');
+            } catch (error) {
+                console.error("Erro ao excluir:", error);
+                showToast(`Erro ao excluir: ${error.message}`, 'error');
+            } finally {
+                state.editingId = null;
+                state.editingCollection = null;
+                dom.confirmDeleteModal.classList.add('hidden');
+            }
+        }
+
+        // --- Utilitários ---
+        function showToast(message, type = 'success') {
+            dom.toastMessage.textContent = message;
+            dom.toast.classList.remove('hidden', 'bg-green-600', 'bg-red-600');
+            if (type === 'success') {
+                dom.toast.classList.add('bg-green-600');
+            } else {
+                dom.toast.classList.add('bg-red-600');
+            }
+            setTimeout(() => {
+                dom.toast.classList.add('hidden');
+            }, 3000);
+        }
+
+        // --- Função para Adicionar Dados Iniciais (Mock) ---
+        async function seedInitialData() {
+            try {
+                let cargoDesignerId, cargoEdicaoId;
+                const cargoQuery = query(cargosCollection, where("nome", "==", "Designer"));
+                const cargoSnapshot = await getDocs(cargoQuery);
+                
+                if (cargoSnapshot.empty) {
+                    console.log("Adicionando dados iniciais (Cargos)...");
+                    const docRefDesigner = await addDoc(cargosCollection, { nome: "Designer" });
+                    cargoDesignerId = docRefDesigner.id;
+                    const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
+                    cargoEdicaoId = docRefEdicao.id;
+                } else {
+                    console.log("Cargos já existem.");
+                    cargoSnapshot.docs.forEach(doc => {
+                        if (doc.data().nome === "Designer") cargoDesignerId = doc.id;
+                    });
+                    const cargoQuery2 = query(cargosCollection, where("nome", "==", "Edição"));
+                    const cargoSnapshot2 = await getDocs(cargoQuery2);
+                    if (cargoSnapshot2.empty) {
+                         const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
+                         cargoEdicaoId = docRefEdicao.id;
+                    } else {
+                        cargoEdicaoId = cargoSnapshot2.docs[0].id;
+                    }
+                }
+
+                const tarefaQuery = query(tarefasPadraoCollection, where("nome", "==", "Planejamento"));
+                const tarefaSnapshot = await getDocs(tarefaQuery);
+                if (tarefaSnapshot.empty) {
+                    console.log("Adicionando dados iniciais (Tarefas)...");
+                    await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
+                    await addDoc(tarefasPadraoCollection, { nome: "Design" }); 
+                }
+
+                const funcQuery = query(funcionariosCollection, where("nome", "==", "Sabrina"));
+                const funcSnapshot = await getDocs(funcQuery);
+                
+                if (funcSnapshot.empty) {
+                    console.log("Adicionando dados iniciais (Funcionários)...");
+                    if (cargoDesignerId) {
+                        await addDoc(funcionariosCollection, {
+                            nome: "Sabrina",
+                            email: "sabrina@email.com",
+                            cargoId: cargoDesignerId,
+                            fotoUrl: "https://placehold.co/100x100/FFF0E7/C75D1B?text=S" // Tema Laranja
+                        });
+                    }
+                    if (cargoEdicaoId) {
+                        await addDoc(funcionariosCollection, {
+                            nome: "Maikon",
+                            email: "maikon@email.com",
+                            cargoId: cargoEdicaoId,
+                            fotoUrl: "https://placehold.co/100x100/E0E8F0/4A698E?text=M" // Tema Azul Sereno
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error("Erro ao adicionar dados iniciais:", error);
+                showToast("Erro ao tentar salvar dados de exemplo.", "error");
+            }
+        }
+
+    </script>
+    <style>
+        :root {
+            /* Cores base do layout limpo */
+            --color-bg: #F4F7FA; 
+            --color-bg-alt: #E9EEF3;
+            --color-card: #FFFFFF;
+            /* Alterado de volta para Cor Padrão (Roxo/Azul) */
+            --color-sidebar: var(--color-accent); 
+            --color-sidebar-text: #FFFFFF; /* Alterado para Branco */
+            --color-sidebar-text-hover: #FFFFFF; /* Alterado para Branco */
+            --color-sidebar-bg-hover: var(--color-accent-dark); /* Alterado para tom escuro */
+            
+            --color-text-primary: #1f2937;
+            --color-text-secondary: #4b5563;
+            
+            /* Tema Padrão (Azul Sereno) */
+            --color-accent: #648AAE;
+            --color-accent-dark: #4A698E;
+            --color-accent-darker: #3E5877;
+            --color-accent-light: #E0E8F0;
+            --color-accent-light-hover: #D0DDE8;
+            --color-accent-text: #FFFFFF;
+        }
+        
+        .theme-solar {
+            /* Amarelo Solar: #FFC82E */
+            --color-accent: #FFC82E;
+            --color-accent-dark: #E6B429;
+            --color-accent-darker: #CC9F24;
+            --color-accent-light: #FFF8E5;
+            --color-accent-light-hover: #FFF1CD;
+            --color-accent-text: #1f2937; 
+        }
+        
+        .theme-laranja {
+            /* Laranja: #F97422 */
+            --color-accent: #F97422;
+            --color-accent-dark: #E0691E;
+            --color-accent-darker: #C75D1B;
+            --color-accent-light: #FFF0E7;
+            --color-accent-light-hover: #FFE8D9;
+            --color-accent-text: #FFFFFF;
+        }
+        
+        .theme-custom {
+            /* --color-accent e --color-accent-text são definidos via JS */
+        }
+
+        body {
+            font-family: var(--font-family);
+        }
+        
+        /* Botões */
+        .btn-primary { @apply px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-text)] rounded-md shadow-sm hover:bg-[var(--color-accent-dark)] transition-colors text-sm font-medium flex items-center justify-center; }
+        .btn-secondary { @apply px-4 py-2 bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] rounded-md shadow-sm hover:bg-stone-200 transition-colors text-sm font-medium; }
+        .btn-danger { @apply px-4 py-2 bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 transition-colors text-sm font-medium; }
+        .btn-icon { @apply p-2 bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] rounded-md hover:bg-stone-200 transition-colors; }
+        .btn-link { @apply text-[var(--color-accent-dark)] hover:text-[var(--color-accent-darker)] font-medium transition-colors; }
+        .btn-link-danger { @apply text-red-600 hover:text-red-800 font-medium transition-colors; }
+
+        /* Estilo Botões Menu Lateral (Fundo Padrão/Roxo) */
+        .menu-btn { @apply flex items-center justify-start w-full px-3 py-3 rounded-md text-base font-medium text-[var(--color-sidebar-text)] hover:text-[var(--color-sidebar-text-hover)] hover:bg-[var(--color-sidebar-bg-hover)] transition-colors duration-150; }
+        .menu-btn-active { @apply bg-[var(--color-accent-dark)] text-white font-semibold hover:bg-[var(--color-accent-darker)] hover:text-white; } /* Texto branco e fundo escuro */
+
+        /* Estilo Botões Sub-Navegação (Pautas, Admin) - ALTERADO */
+        .sub-nav-btn { @apply px-4 py-2 text-sm font-medium rounded-md transition-colors duration-150 shadow-sm; } 
+        .sub-nav-btn-active { @apply bg-[var(--color-accent)] text-[var(--color-accent-text)] font-semibold shadow-sm; } /* Fundo na cor do tema */
+        .sub-nav-btn-inactive { @apply bg-white text-[var(--color-text-secondary)] border border-stone-200 hover:bg-stone-50; } /* Fundo branco com borda */
+        
+        .theme-swatch { @apply w-6 h-6 rounded-full border border-gray-300 cursor-pointer transition-all; }
+        
+        /* Tabelas */
+        .table-header { @apply px-6 py-3 text-left text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wider; }
+        .table-cell { @apply px-6 py-4 whitespace-nowrap text-sm text-stone-700; }
+        
+        /* Formulários */
+        .form-input { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
+        .form-select { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
+
+        /* Correção para centralização do ícone */
+        .sidebar-minimized .sidebar-icon-margin {
+            margin-right: 0;
+        }
+
+        /* Adicionado para forçar o alinhamento do texto à esquerda */
+        .sidebar-text {
+            @apply text-left;
+        }
+        
+    </style>
+</head>
+<body class="bg-[var(--color-bg)] antialiased" style="font-family: var(--font-family);">
+
+    <!-- Wrapper da Aplicação Principal (Inicia escondido) -->
+    <div id="app-view" class="hidden">
+        <!-- Menu Lateral (Mobile: escondido por padrão) -->
+        <nav id="sidebar-menu" class="fixed inset-y-0 left-0 bg-[var(--color-sidebar)] shadow-md w-64 p-4 z-30 transform -translate-x-full md:translate-x-0 transition-all duration-300 ease-in-out flex flex-col">
+            <!-- Logo / Título -->
+            <div id="sidebar-title" class="flex items-center justify-start px-3 py-4 mb-4"> <!-- Alinhado à esquerda e px-3 -->
+                <h1 class="text-2xl font-bold text-white"> <!-- Texto Branco -->
+                    <span class="font-normal">Gestão de</span> Pautas
+                </h1>
+            </div>
+
+            <!-- Itens do Menu -->
+            <div class="flex flex-col space-y-2">
+                <button id="menu-pautas" class="menu-btn justify-start menu-btn-active">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    <span class="sidebar-text">Pautas</span>
+                </button>
+                
+                <button id="btn-lancar-atividade-menu" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span class="sidebar-text">Lançar Atividade</span>
+                </button>
+
+                <button id="menu-dashboard" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>
+                    <span class="sidebar-text">Dashboard</span>
+                </button>
+
+                <button id="menu-admin" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span class="sidebar-text">Administrativo</span>
+                </button>
+
+                <button id="menu-tema" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a4 4 0 014-4h10a4 4 0 014 4v12a4 4 0 01-4 4H7zm0 0l8.5-8.5M7 3v18m8.5-18l-8.5 8.5m0 0L11 11"></path></svg>
+                    <span class="sidebar-text">Tema</span>
+                </button>
+            </div>
+            
+            <!-- Controles do Menu (Fundo) -->
+            <div class="mt-auto">
+                <button id="sidebar-toggle-button" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+                    <!-- <span class="sidebar-text text-left">Minimizar</span> --> <!-- Texto removido -->
+                </button>
+                
+                <button id="btn-logout" class="menu-btn justify-start w-full">
+                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    <span class="sidebar-text text-left">Sair</span>
+                </button>
+                
+                <div id="user-id-wrapper" class="flex items-center justify-start w-full px-3 py-3 rounded-md text-base font-medium text-white opacity-75">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    <span id="user-id-display" class="sidebar-text text-xs truncate">Conectando...</span>
+                </div>
+            </div>
+        </nav>
+        
+        <!-- Conteúdo Principal -->
+        <div id="main-content-wrapper" class="md:ml-64 transition-all duration-300 ease-in-out">
+            <!-- Header Mobile -->
+            <header class="md:hidden bg-[var(--color-sidebar)] shadow-md p-4 flex justify-between items-center">
+                <h1 class="text-lg font-bold text-white"><span class="font-normal">Gestão de</span> Pautas</h1>
+                <button id="mobile-menu-button" class="text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                </button>
+            </header>
+            
+            <!-- Container do Conteúdo -->
+            <main class="p-6">
+            
+                <!-- Filtros Globais (Movidos para cá) -->
+                <div class="bg-[var(--color-card)] p-4 rounded-lg shadow-sm mb-6">
+                    <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                        <select id="filter-periodo" class="form-select text-sm">
+                            <option value="semana">Esta Semana</option>
+                            <option value="hoje">Hoje</option>
+                            <option value="todos">Todos</option>
+                        </select>
+                        <select id="filter-funcionario" class="form-select text-sm">
+                            <option value="todos">Todos Funcionários</option>
+                        </select>
+                        <select id="filter-cargo" class="form-select text-sm">
+                            <option value="todos">Todos Cargos</option>
+                        </select>
+                        <select id="filter-cliente" class="form-select text-sm">
+                            <option value="todos">Todos Clientes</option>
+                        </select>
+                        <select id="filter-tarefa" class="form-select text-sm">
+                            <option value="todos">Todas Tarefas</option>
+                        </select>
+                    </div>
+                </div>
+            
+                <!-- VIEW: PAUTAS -->
+                <div id="main-view-pautas">
+                    <div class="flex items-center justify-between mb-4">
+                        <div id="pautas-nav" class="flex flex-wrap gap-3">
+                            <button data-view="calendario" class="sub-nav-btn sub-nav-btn-active">Calendário</button>
+                            <button data-view="semana" class="sub-nav-btn sub-nav-btn-inactive">Semana</button>
+                            <button data-view="lista" class="sub-nav-btn sub-nav-btn-inactive">Lista Geral</button>
+                        </div>
+                    </div>
+                    <div id="pautas-content">
+                        <!-- Conteúdo Pautas (Calendário/Lista) renderizado aqui -->
+                    </div>
+                </div>
+                
+                <!-- VIEW: DASHBOARD -->
+                <div id="main-view-dashboard" class="hidden">
+                    <div id="dashboard-content">
+                        <!-- Conteúdo Dashboard (Gráficos) renderizado aqui -->
+                    </div>
+                </div>
+                
+                <!-- VIEW: ADMIN -->
+                <div id="main-view-admin" class="hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <div id="admin-nav" class="flex flex-wrap gap-3">
+                            <button data-view="funcionarios" class="sub-nav-btn sub-nav-btn-active">Funcionários</button>
+                            <button data-view="cargos" class="sub-nav-btn sub-nav-btn-inactive">Cargos</button>
+                            <button data-view="clientes" class="sub-nav-btn sub-nav-btn-inactive">Clientes</button>
+                            <button data-view="tarefas" class="sub-nav-btn sub-nav-btn-inactive">Tarefas Padrão</button>
+                        </div>
+                    </div>
+                    <div id="admin-content">
+                        <!-- Conteúdo Admin (Tabelas) renderizado aqui -->
+                    </div>
+                </div>
+            
+            </main>
+        </div>
+    </div>
+    
+    <!-- Modal Principal -->
+    <div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="modal-title" class="text-lg font-semibold text-stone-800"></h3>
+                <button id="btn-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
+            </div>
+            <div id="modal-content" class="p-6 overflow-y-auto relative">
+                <!-- Formulário renderizado aqui -->
+                <div id="modal-loading" class="hidden absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center">
+                    <span class="text-lg text-[var(--color-accent-dark)]">Carregando...</span>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
+                <button id="btn-modal-cancel" class="btn-secondary">Cancelar</button>
+                <button id="btn-modal-save" class="btn-primary">Salvar</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Confirmação de Exclusão -->
+    <div id="confirm-delete-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+            <div class="p-6">
+                <h3 class="text-lg font-medium text-stone-900">Confirmar Exclusão</h3>
+                <p class="mt-2 text-sm text-stone-600">Você tem certeza que deseja excluir este item? Esta ação não pode ser desfeita.</p>
+            </div>
+            <div class="flex justify-end space-x-3 p-4 bg-stone-50 rounded-b-lg">
+                <button id="btn-cancel-delete" class="btn-secondary">Cancelar</button>
+                <button id="btn-confirm-delete" class="btn-danger">Excluir</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast de Notificação -->
+    <div id="toast" class="hidden fixed bottom-4 right-4 max-w-xs text-white px-4 py-3 rounded-lg shadow-lg z-50">
+        <span id="toast-message"></span>
+    </div>
+    
+    <!-- Modal de Tema -->
+    <div id="theme-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+             <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="theme-modal-title" class="text-lg font-semibold text-stone-800">Personalizar Tema</h3>
+                <button id="theme-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
+            </div>
+            <div class="p-6 space-y-6">
+                <!-- Temas Rápidos -->
+                <div>
+                    <h4 class="text-sm font-medium text-stone-600 mb-2">Temas Rápidos</h4>
+                    <div class="flex space-x-3">
+                        <div class="text-center">
+                            <button id="theme-quick-sereno" class="theme-swatch bg-[#648AAE]" title="Tema Azul Sereno"></button>
+                            <span class="text-xs text-stone-500 block mt-1">Sereno</span>
+                        </div>
+                        <div class="text-center">
+                            <button id="theme-quick-solar" class="theme-swatch bg-[#FFC82E]" title="Tema Amarelo Solar"></button>
+                            <span class="text-xs text-stone-500 block mt-1">Solar</span>
+                        </div>
+                        <div class="text-center">
+                            <button id="theme-quick-laranja" class="theme-swatch bg-[#F97422]" title="Tema Laranja"></button>
+                            <span class="text-xs text-stone-500 block mt-1">Laranja</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Cor Personalizada -->
+                <div>
+                    <h4 class="text-sm font-medium text-stone-600 mb-2">Cor de Destaque</h4>
+                    <div class="flex items-center space-x-2">
+                        <input type="color" id="theme-color-picker" class="w-10 h-10 p-0 border-none rounded-md cursor-pointer">
+                        <input type="text" id="theme-hex-input" class="form-input w-full" placeholder="#648AAE">
+                    </div>
+                </div>
+                
+                <!-- Fonte -->
+                <div>
+                    <h4 class="text-sm font-medium text-stone-600 mb-2">Fonte da Aplicação</h4>
+                    <select id="theme-font-select" class="form-select">
+                        <option value="Inter">Inter (Padrão)</option>
+                        <option value="Roboto Slab">Roboto Slab (Serifada)</option>
+                        <option value="Inconsolata">Inconsolata (Mono)</option>
+                    </select>
+                </div>
+                
+                <!-- Tamanho da Fonte -->
+                <div>
+                    <h4 class="text-sm font-medium text-stone-600 mb-2">Tamanho do Texto</h4>
+                    <div class="flex items-center space-x-2">
+                        <button id="theme-font-size-decrease" class="btn-secondary text-lg leading-none px-3 py-1">-</button>
+                        <span class="text-sm text-stone-600">Ajustar</span>
+                        <button id="theme-font-size-increase" class="btn-secondary text-lg leading-none px-3 py-1">+</button>
+                    </div>
+                </div>
+            </div>
+             <div class="flex justify-end p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
+                <button id="theme-reset" class="btn-secondary">Restaurar Padrões</Gbutton>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
