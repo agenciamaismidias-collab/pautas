@@ -21,12 +21,11 @@
         import {
             getAuth,
             onAuthStateChanged,
-            GoogleAuthProvider,
-            signInWithPopup,
             createUserWithEmailAndPassword,
             signInWithEmailAndPassword,
-            signOut
-            // Removido: signInAnonymously, signInWithCustomToken
+            signOut,
+            updateProfile // Adicionado para salvar o nome
+            // Removido: GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken
         } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
         import {
             getFirestore,
@@ -199,10 +198,12 @@
             
             // Ecrã de Login
             dom.loginForm = document.getElementById('login-form');
+            dom.loginNameWrapper = document.getElementById('login-name-wrapper'); // Adicionado
+            dom.loginName = document.getElementById('login-name'); // Adicionado
             dom.loginEmail = document.getElementById('login-email');
             dom.loginPassword = document.getElementById('login-password');
             dom.loginEmailBtn = document.getElementById('login-email-btn');
-            dom.loginGoogleBtn = document.getElementById('login-google-btn');
+            // dom.loginGoogleBtn = document.getElementById('login-google-btn'); // Removido
             dom.loginMessage = document.getElementById('login-message');
             dom.loginTitle = document.getElementById('login-title');
             dom.toggleToCreate = document.getElementById('toggle-to-create');
@@ -316,7 +317,6 @@
                 state.userRole = userDoc.data().role;
             } else {
                 // Novo usuário
-                // Verifica se é o primeiro admin
                 const adminQuery = query(usuariosCollection, where('role', '==', 'admin'));
                 const adminSnapshot = await getDocs(adminQuery);
                 
@@ -397,7 +397,7 @@
         // --- Event Handlers ---
         function setupUIEventListeners() {
             // Ecrã de Login
-            dom.loginGoogleBtn.addEventListener('click', handleGoogleLogin);
+            // dom.loginGoogleBtn.addEventListener('click', handleGoogleLogin); // Removido
             dom.loginEmailBtn.addEventListener('click', handleEmailLoginOrCreate);
             dom.toggleToCreate.addEventListener('click', () => toggleLoginMode(true));
             dom.toggleToLogin.addEventListener('click', () => toggleLoginMode(false));
@@ -463,48 +463,46 @@
                 dom.loginEmailBtn.textContent = 'Criar Conta';
                 dom.toggleToCreate.classList.add('hidden');
                 dom.toggleToLogin.classList.remove('hidden');
-                dom.loginGoogleBtn.classList.add('hidden'); // Esconde Google ao criar conta
+                dom.loginNameWrapper.classList.remove('hidden'); // Mostra campo Nome
             } else {
                 dom.loginTitle.textContent = 'Aceder à Plataforma';
                 dom.loginEmailBtn.textContent = 'Entrar com Email';
                 dom.toggleToCreate.classList.remove('hidden');
                 dom.toggleToLogin.classList.add('hidden');
-                dom.loginGoogleBtn.classList.remove('hidden'); // Mostra Google ao fazer login
+                dom.loginNameWrapper.classList.add('hidden'); // Esconde campo Nome
             }
         }
         
-        async function handleGoogleLogin() {
-            const provider = new GoogleAuthProvider();
-            dom.loginMessage.textContent = "";
-            try {
-                await signInWithPopup(auth, provider);
-                // onAuthStateChanged vai tratar o resto
-            } catch (error) {
-                console.error("Erro no login com Google:", error);
-                dom.loginMessage.textContent = `Erro: ${error.message}`;
-            }
-        }
+        // handleGoogleLogin removido
         
         async function handleEmailLoginOrCreate(e) {
             e.preventDefault();
             const email = dom.loginEmail.value;
             const password = dom.loginPassword.value;
-            const isCreating = dom.toggleToLogin.classList.contains('hidden'); // Se o botão "Já tem conta?" está visível, está a criar
+            const nome = dom.loginName.value;
+            
+            // Correção: Se o link "Criar Conta" (toggleToCreate) está escondido, estamos no modo de criação.
+            const isCreating = dom.toggleToCreate.classList.contains('hidden');
             
             dom.loginMessage.textContent = "";
-
-            if (!email || !password) {
-                dom.loginMessage.textContent = "Por favor, preencha email e senha.";
-                return;
-            }
 
             try {
                 if (isCreating) {
                     // Criar conta
+                    if (!nome || !email || !password) {
+                        dom.loginMessage.textContent = "Por favor, preencha nome, email e senha.";
+                        return;
+                    }
                     dom.loginMessage.textContent = "Criando conta...";
-                    await createUserWithEmailAndPassword(auth, email, password);
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    // Salva o nome no perfil do Auth
+                    await updateProfile(userCredential.user, { displayName: nome });
                 } else {
                     // Fazer login
+                    if (!email || !password) {
+                        dom.loginMessage.textContent = "Por favor, preencha email e senha.";
+                        return;
+                    }
                     dom.loginMessage.textContent = "A entrar...";
                     await signInWithEmailAndPassword(auth, email, password);
                 }
@@ -859,7 +857,7 @@
         // --- Troca de Views ---
         function switchMainView(view) {
             // Se 'leitor' tentar aceder ao 'admin', bloqueia
-            if (view === 'admin' && state.userRole === 'leitor') {
+            if (view === 'admin' && state.userRole !== 'admin') {
                 showToast("Apenas 'admins' podem aceder a esta área.", "error");
                 return;
             }
@@ -2110,6 +2108,10 @@
             
             <!-- Formulário de Login/Registo -->
             <form id="login-form" class="space-y-4">
+                <div id="login-name-wrapper" class="hidden"> <!-- Campo Nome (para registo) -->
+                    <label for="login-name" class="block text-sm font-medium text-stone-700">Nome</label>
+                    <input type="text" id="login-name" name="name" class="form-input">
+                </div>
                 <div>
                     <label for="login-email" class="block text-sm font-medium text-stone-700">Email</label>
                     <input type="email" id="login-email" name="email" class="form-input" required>
@@ -2124,21 +2126,7 @@
                 <button id="login-email-btn" type="submit" class="btn-primary w-full justify-center">Entrar com Email</button>
             </form>
             
-            <div class="mt-6">
-                <div class="relative">
-                    <div class="absolute inset-0 flex items-center">
-                        <div class="w-full border-t border-stone-300"></div>
-                    </div>
-                    <div class="relative flex justify-center text-sm">
-                        <span class="px-2 bg-[var(--color-card)] text-stone-500">ou</span>
-                    </div>
-                </div>
-                
-                <button id="login-google-btn" class="btn-secondary w-full justify-center mt-6 flex items-center">
-                    <svg class="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48px" height="48px"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"></path><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"></path><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.223,0-9.64-3.657-11.303-8H6.306C9.656,35.663,16.318,40,24,40z"></path><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.574l6.19,5.238C39.712,35.619,44,29.569,44,24C44,22.659,43.862,21.35,43.611,20.083z"></paath></svg>
-                    Entrar com Google
-                </button>
-            </div>
+            <!-- Divisor Removido -->
             
             <div class="text-sm text-center mt-6">
                 <button id="toggle-to-create" class="btn-link">Não tem uma conta? Crie uma</button>
