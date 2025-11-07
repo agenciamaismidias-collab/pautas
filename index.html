@@ -16,15 +16,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;700&family=Inconsolata:wght@400;500;700&display=swap" rel="stylesheet">
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
         // Lógica de autenticação revertida para a versão simples
         import {
             getAuth,
             signInAnonymously,
             signInWithCustomToken,
             onAuthStateChanged
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
         import {
             getFirestore,
             doc,
@@ -38,7 +38,7 @@
             query,
             where,
             getDocs
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
         
         // Importação do Firebase Storage
         import {
@@ -46,7 +46,10 @@
             ref,
             uploadBytes,
             getDownloadURL
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+        } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-storage.js";
+        
+        // Adicionado Analytics
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-analytics.js";
 
         // --- Configuração ---
         const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
@@ -70,6 +73,7 @@
         
         let db, auth, userId;
         let app, storage; // Adicionado storage
+        let analytics; // Adicionado analytics
 
         // --- Collections ---
         let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection;
@@ -181,6 +185,9 @@
             dom.themeFontSizeDecrease = document.getElementById('theme-font-size-decrease');
             dom.themeFontSizeIncrease = document.getElementById('theme-font-size-increase');
             dom.themeReset = document.getElementById('theme-reset');
+            
+            // Adicionado de volta para erros do GitHub
+            dom.configError = document.getElementById('config-error');
         }
         
         // --- Funções Utilitárias de Tema (Movidas para o topo) ---
@@ -195,6 +202,7 @@
         }
         
         function shadeColor(color, percent) {
+            // Garante que a cor é um hex válido
             if (!color || !color.startsWith('#') || color.length < 7) {
                 console.warn("Cor inválida para shadeColor:", color);
                 color = '#648AAE'; // Cor padrão (Azul Sereno)
@@ -230,7 +238,8 @@
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                storage = getStorage(app); 
+                storage = getStorage(app); // Inicializa o Storage
+                analytics = getAnalytics(app); // Inicializa o Analytics
 
                 cargosCollection = collection(db, cargosPath);
                 funcionariosCollection = collection(db, funcionariosPath);
@@ -240,33 +249,55 @@
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
+                        // Usuário logado (anônimo ou real)
                         userId = user.uid;
-                        dom.userIdDisplay.textContent = `User ID: ${userId.substring(0, 8)}...`; 
+                        dom.userIdDisplay.textContent = `User ID: ${userId.substring(0, 8)}...`; // Simples
                         state.isAuthReady = true;
                         
+                        // Mostra a App
                         dom.appView.classList.remove('hidden');
 
                         await seedInitialData(); 
                         setupFirestoreListeners();
                         render();
                     } else {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
+                        // Ninguém logado, tenta autenticação de fallback
+                        try {
+                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                // Caminho da Pré-visualização
+                                await signInWithCustomToken(auth, __initial_auth_token);
+                            } else {
+                                // Caminho do GitHub
+                                console.log("Tentando login anônimo...");
+                                await signInAnonymously(auth);
+                            }
+                        } catch (authError) {
+                            // Erro no login (ex: Anônimo desativado)
+                            console.error("Erro na autenticação de fallback:", authError);
+                            showConfigError("Falha na Autenticação", "Não foi possível autenticar anonimamente. Se for o proprietário, por favor, verifique no seu painel Firebase se o 'Sign-in anônimo' (Anonymous sign-in) está ativado na secção Authentication.");
                         }
                     }
                 });
             } catch (error) {
+                // Erro na inicialização (ex: config errada)
                 console.error("Erro ao inicializar Firebase:", error);
-                showToast("Erro ao conectar com o banco de dados.", 'error');
-                try {
-                    if (!auth.currentUser) {
-                        await signInAnonymously(auth);
-                    }
-                } catch (authError) {
-                    console.error("Erro no login anônimo de fallback:", authError);
-                }
+                showConfigError("Erro de Configuração", "A sua aplicação não conseguiu ligar-se ao Firebase. Verifique se a 'firebaseConfig' está correta e se o domínio está autorizado.");
+            }
+        }
+        
+        // --- Nova Função de Erro ---
+        function showConfigError(title, message) {
+            if(dom.configError) {
+                dom.configError.innerHTML = `
+                    <h1 class="text-2xl font-bold text-red-600 mb-4">${title}</h1>
+                    <p class="text-stone-700 mb-2">${message}</p>
+                    <p class="text-stone-600">Por favor, verifique a consola (F12) para mais detalhes.</p>
+                `;
+                dom.appView.classList.add('hidden');
+                dom.configError.classList.remove('hidden');
+            } else {
+                // Fallback extremo
+                alert(`ERRO: ${title} - ${message}`);
             }
         }
         
@@ -305,7 +336,9 @@
 
         // --- Event Handlers ---
         function setupUIEventListeners() {
+            // Nova Navegação
             dom.mobileMenuButton.addEventListener('click', () => {
+                // Alterna a visibilidade do menu no mobile
                 dom.sidebarMenu.classList.toggle('-translate-x-full');
             });
             dom.sidebarToggleButton.addEventListener('click', toggleSidebar);
@@ -316,9 +349,11 @@
             dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
             dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
             dom.btnLogout.addEventListener('click', () => {
+                 // O signOut() real não funciona bem com login anônimo ou token
                  showToast("Função Sair não aplicável no modo de pré-visualização.", "error");
             });
 
+            // Navegação Secundária (Delegação)
             dom.pautasNav.addEventListener('click', (e) => {
                 const btn = e.target.closest('button[data-view]');
                 if (btn) switchPautasView(btn.dataset.view);
@@ -328,15 +363,18 @@
                 if (btn) switchAdminView(btn.dataset.view);
             });
 
+            // Ações (Delegação)
             dom.adminContent.addEventListener('click', handleAdminContentClick);
             dom.pautasContent.addEventListener('click', handlePautasContentClick);
 
+            // Filtros
             dom.filterPeriodo.addEventListener('change', handleFilterChange);
             dom.filterFuncionario.addEventListener('change', handleFilterChange);
             dom.filterCargo.addEventListener('change', handleFilterChange);
             dom.filterCliente.addEventListener('change', handleFilterChange);
             dom.filterTarefa.addEventListener('change', handleFilterChange); 
 
+            // Modals
             dom.btnModalClose.addEventListener('click', closeModal);
             dom.btnModalCancel.addEventListener('click', closeModal);
             dom.btnModalSave.addEventListener('click', handleModalSave);
@@ -344,6 +382,7 @@
             dom.btnCancelDelete.addEventListener('click', () => dom.confirmDeleteModal.classList.add('hidden'));
             dom.btnConfirmDelete.addEventListener('click', handleConfirmDelete);
             
+            // Novo Modal de Tema
             dom.themeModalClose.addEventListener('click', () => dom.themeModal.classList.add('hidden'));
             dom.themeQuickSereno.addEventListener('click', () => applyTheme('sereno'));
             dom.themeQuickSolar.addEventListener('click', () => applyTheme('solar'));
@@ -374,6 +413,7 @@
         }
         
         function handlePautasContentClick(e) {
+            // Permite clicar no dia (calendário) ou em botões
             const target = e.target.closest('[data-action]');
             if (!target) return;
             
@@ -451,12 +491,13 @@
         function applyTheme(themeName, font, customColor) {
             const root = document.documentElement;
             
+            // 1. Aplicar Paleta de Cores
             if (themeName) {
                 root.classList.remove('theme-solar', 'theme-laranja', 'theme-custom');
                 if (themeName === 'solar' || themeName === 'laranja') {
                     root.classList.add(`theme-${themeName}`);
                 } else if (themeName === 'sereno') {
-                    // Padrão
+                    // Sereno é o padrão, sem classe
                 } else if (themeName === 'custom' && customColor) {
                     root.classList.add('theme-custom');
                 }
@@ -470,6 +511,7 @@
                 if (accentColor) {
                     root.style.setProperty('--color-accent', accentColor);
                     
+                    // Gera tons mais claros/escuros
                     const darkColor = shadeColor(accentColor, -20);
                     const darkerColor = shadeColor(accentColor, -40);
                     const lightColor = shadeColor(accentColor, 90);
@@ -482,9 +524,10 @@
 
 
                     const luminance = getLuminance(accentColor);
-                    const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF';
+                    const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF'; // Preto ou Branco
                     root.style.setProperty('--color-accent-text', textColor);
                     
+                    // Atualiza os inputs do modal
                     if(dom.themeColorPicker) dom.themeColorPicker.value = accentColor;
                     if(dom.themeHexInput) dom.themeHexInput.value = accentColor;
                 }
@@ -495,6 +538,7 @@
                 }
             }
 
+            // 2. Aplicar Fonte
             if (font) {
                 const fontMap = {
                     'Inter': "'Inter', sans-serif",
@@ -507,6 +551,7 @@
                 if(dom.themeFontSelect) dom.themeFontSelect.value = font;
             }
 
+            // Força a re-renderização dos gráficos para pegar novas cores (com um pequeno atraso)
             setTimeout(renderDashboard, 50); 
         }
         
@@ -515,7 +560,7 @@
         function adjustFontSize(delta) {
             const root = document.documentElement;
             let currentSize = parseFloat(getComputedStyle(root).fontSize);
-            let newSize = Math.max(12, Math.min(18, currentSize + delta));
+            let newSize = Math.max(12, Math.min(18, currentSize + delta)); // Limita entre 12px e 18px
             root.style.fontSize = `${newSize}px`;
             localStorage.setItem('sgap_theme_fontsize', `${newSize}px`);
         }
@@ -527,7 +572,7 @@
             localStorage.removeItem('sgap_theme_fontsize');
             
             document.documentElement.style.fontSize = '15px';
-            applyTheme('sereno', 'Inter');
+            applyTheme('sereno', 'Inter'); // Volta ao padrão
         }
 
         function applyThemeFromLocalStorage() {
@@ -574,6 +619,7 @@
             if (savedTarefa) state.filterTarefa = savedTarefa;
             
             // Aplicar estado da navegação (botões)
+            // Isto garante que os botões corretos estão ativos ANTES da primeira renderização
             if (dom.menuPautas) dom.menuPautas.classList.toggle('menu-btn-active', state.currentMainView === 'pautas');
             if (dom.menuDashboard) dom.menuDashboard.classList.toggle('menu-btn-active', state.currentMainView === 'dashboard');
             if (dom.menuAdmin) dom.menuAdmin.classList.toggle('menu-btn-active', state.currentMainView === 'admin');
@@ -611,35 +657,44 @@
             const toggleBtn = dom.sidebarToggleButton;
             const title = dom.sidebarTitle;
 
+            // Adiciona/Remove classe no body para CSS
             document.body.classList.toggle('sidebar-minimized', isMinimized);
 
+            // Ajusta o menu
             menu.classList.toggle('w-64', !isMinimized);
-            menu.classList.toggle('w-20', isMinimized); 
+            menu.classList.toggle('w-20', isMinimized); // Largura minimizada
 
+            // Ajusta o conteúdo principal
             main.classList.toggle('md:ml-64', !isMinimized);
             main.classList.toggle('md:ml-20', isMinimized);
 
+            // Esconde/Exibe texto e título
             menu.querySelectorAll('.sidebar-text').forEach(text => {
                 text.classList.toggle('hidden', isMinimized);
             });
+            // Adicionado: Esconde/Exibe os ícones de navegação
             menu.querySelectorAll('.sidebar-nav-icon').forEach(icon => {
                 icon.classList.toggle('hidden', !isMinimized);
             });
             
             title.classList.toggle('hidden', isMinimized);
 
+            // Centraliza ícones
             dom.sidebarMenu.querySelectorAll('.menu-btn').forEach(btn => {
                 btn.classList.toggle('justify-center', isMinimized);
                 btn.classList.toggle('justify-start', !isMinimized);
             });
             
+            // Adicionado: Centraliza também o wrapper do User ID
             if (dom.userIdDisplayWrapper) {
                 dom.userIdDisplayWrapper.classList.toggle('justify-center', isMinimized);
                 dom.userIdDisplayWrapper.classList.toggle('justify-start', !isMinimized);
             }
             
+            // Atualiza o botão de toggle
             if (toggleBtn) {
                 const icon = toggleBtn.querySelector('svg');
+                // Removida a lógica do 'text.textContent'
                 if (isMinimized) {
                     icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
                 } else {
@@ -652,17 +707,21 @@
         function switchMainView(view) {
             state.currentMainView = view;
             
+            // Atualiza botões do menu
             dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
             dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
             dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
             
+            // Desativa botões que não são "views"
             dom.menuTema.classList.remove('menu-btn-active');
             dom.btnLancarAtividadeMenu.classList.remove('menu-btn-active');
 
+            // Exibe a view correta
             dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
             dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
             dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
             
+            // Fecha menu mobile ao navegar
             if (window.innerWidth < 768) {
                 dom.sidebarMenu.classList.add('-translate-x-full');
             }
@@ -673,6 +732,7 @@
 
         function switchPautasView(view) {
             state.currentPautasView = view;
+            // Atualiza botões da sub-navegação
             Array.from(dom.pautasNav.querySelectorAll('button[data-view]')).forEach(btn => {
                 btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
                 btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
@@ -683,7 +743,8 @@
 
         function switchAdminView(view) {
             state.currentAdminView = view;
-             Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
+             // Atualiza botões da sub-navegação
+            Array.from(dom.adminNav.querySelectorAll('button[data-view]')).forEach(btn => {
                 btn.classList.toggle('sub-nav-btn-active', btn.dataset.view === view);
                 btn.classList.toggle('sub-nav-btn-inactive', btn.dataset.view !== view);
             });
@@ -695,8 +756,10 @@
         function render() {
             if (!state.isAuthReady) return;
 
+            // Renderiza os filtros primeiro, pois eles são independentes
             renderFiltros(); 
 
+            // Renderiza a view principal ativa
             if (state.currentMainView === 'pautas') {
                 renderPautas();
             } else if (state.currentMainView === 'dashboard') {
@@ -751,6 +814,7 @@
             
             let tarefaOptions = '<option value="todos">Todas Tarefas</option>';
             state.tarefasPadrao.forEach(t => {
+                // Filtra pelo nome, pois é isso que é salvo no título da atividade
                 tarefaOptions += `<option value="${t.nome}">${t.nome}</option>`;
             });
             dom.filterTarefa.innerHTML = tarefaOptions;
@@ -767,6 +831,7 @@
             let agora = new Date(); 
             let atividadesFiltradas = state.atividades;
         
+            // 1. Filtro de Período (APENAS PARA VIEW 'LISTA' e 'DASHBOARD')
             if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard') {
                 if (state.filterPeriodo === 'hoje') {
                     const hojeStr = agora.toISOString().split('T')[0];
@@ -776,24 +841,27 @@
                     });
                 } else if (state.filterPeriodo === 'semana') {
                     const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
-                    const diaDaSemana = hoje.getDay(); 
+                    const diaDaSemana = hoje.getDay(); // 0 (Dom) - 6 (Sab)
                     
                     const inicioSemana = new Date(hoje.getTime());
                     inicioSemana.setDate(hoje.getDate() - diaDaSemana);
-                    inicioSemana.setHours(0, 0, 0, 0); 
+                    inicioSemana.setHours(0, 0, 0, 0); // Início do Domingo
     
                     const fimSemana = new Date(inicioSemana.getTime());
                     fimSemana.setDate(inicioSemana.getDate() + 6);
-                    fimSemana.setHours(23, 59, 59, 999); 
+                    fimSemana.setHours(23, 59, 59, 999); // Fim do Sábado
     
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
                         if (!at.data) return false;
+                        // Adiciona T12:00:00 para evitar problemas de fuso horário
                         const dataAt = new Date(at.data + 'T12:00:00'); 
                         return dataAt >= inicioSemana && dataAt <= fimSemana;
                     });
                 } 
+                // Se 'todos', nenhum filtro de data é aplicado
             }
 
+            // 2. Filtro de Cargo (Indireto)
             if (state.filterCargo !== 'todos') {
                 let funcionariosFiltradosPorCargo = [];
                 funcionariosFiltradosPorCargo = state.funcionarios
@@ -805,18 +873,22 @@
                 );
             }
             
+            // 3. Filtro de Funcionário (Direto)
             if (state.filterFuncionario !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.funcionarioId === state.filterFuncionario
                 );
             }
             
+            // 4. Filtro de Cliente (Direto)
             if (state.filterCliente !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.clienteId === state.filterCliente
                 );
             }
 
+            // 5. Filtro de Tarefa (Direto, pelo Título)
+            // Isso funciona porque a "Tarefa Padrão" preenche o campo "título"
             if (state.filterTarefa !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.titulo === state.filterTarefa
@@ -826,13 +898,15 @@
             return atividadesFiltradas;
         }
         
+        // --- Nova Função Utilitária para Cores de Status ---
         function getStatusCardClasses(status) {
+            // Define os mapeamentos de cores (Tailwind)
             const statusMap = {
                 'Concluído': 'bg-green-100 text-green-800 hover:bg-green-200',
                 'Em Andamento': 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)] hover:bg-[var(--color-accent-light-hover)]',
-                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', 
+                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200', // Laranja (Festa do Oli)
                 'Bloqueado': 'bg-red-100 text-red-800 hover:bg-red-200',
-                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200' // Para status nulo ou indefinido
             };
             
             return statusMap[status] || statusMap['default'];
@@ -857,7 +931,9 @@
             
             const monthName = state.currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
+            // Filtra atividades por (func, cargo, cliente, tarefa)
             const atividadesFiltradas = getFilteredAtividades();
+            // Filtra manualmente pelo mês visível
             const atividadesDoMes = atividadesFiltradas.filter(at => {
                 if (!at.data) return false;
                 const dataAt = new Date(at.data + 'T12:00:00');
@@ -884,17 +960,20 @@
             
             html += `<div class="grid grid-cols-7 gap-1 mt-1">`;
             
+            // Dias em branco
             for (let i = 0; i < firstDay; i++) {
                 html += `<div class="border rounded-md bg-stone-50 min-h-[100px]"></div>`;
             }
             
+            // Dias do mês
             for (let day = 1; day <= daysInMonth; day++) {
                 const diaAtual = new Date(year, month, day);
                 const hoje = new Date();
                 const isHoje = diaAtual.toDateString() === hoje.toDateString();
                 
+                // Filtra atividades *deste dia*
                 const atividadesDoDia = atividadesDoMes.filter(at => {
-                    const dataAt = new Date(at.data + 'T12:00:00');
+                    const dataAt = new Date(at.data + 'T12:00:00'); // Tratar data como local
                     return dataAt.getDate() === day;
                 });
                 
@@ -905,7 +984,7 @@
                 atividadesDoDia.forEach(at => {
                     const func = state.funcionarios.find(f => f.id === at.funcionarioId);
                     const cliente = state.clientes.find(c => c.id === at.clienteId);
-                    const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
+                    const statusClasses = getStatusCardClasses(at.status || 'Pendente'); // Pega as classes de cor
                     
                     html += `
                         <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
@@ -924,12 +1003,13 @@
         }
 
         function renderSemana() {
+            // 1. Calcular datas da semana (Eixo X)
             const diasSemanaLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
             const diasDaSemanaArray = [];
             const hoje = new Date();
             const hojeKey = hoje.toISOString().split('T')[0];
 
-            const diaDaSemanaAtual = state.currentDate.getDay(); 
+            const diaDaSemanaAtual = state.currentDate.getDay(); // 0 (Dom) - 6 (Sab)
             const inicioSemana = new Date(state.currentDate.getFullYear(), state.currentDate.getMonth(), state.currentDate.getDate() - diaDaSemanaAtual);
             inicioSemana.setHours(0, 0, 0, 0);
 
@@ -952,6 +1032,7 @@
                 });
             }
 
+            // 2. Filtrar atividades
             const atividadesFiltradas = getFilteredAtividades(); 
             const atividadesDaSemana = atividadesFiltradas.filter(at => {
                 if (!at.data) return false;
@@ -959,14 +1040,22 @@
                 return dataAt >= inicioSemana && dataAt <= fimSemana;
             });
 
+            // 3. Determinar Funcionários para exibir (Eixo Y)
             let funcionariosParaExibir = [...state.funcionarios];
+
+            // Aplica filtro de Cargo
             if (state.filterCargo !== 'todos') {
                 funcionariosParaExibir = funcionariosParaExibir.filter(f => f.cargoId === state.filterCargo);
             }
+            
+            // Aplica filtro de Funcionário
             if (state.filterFuncionario !== 'todos') {
                 funcionariosParaExibir = funcionariosParaExibir.filter(f => f.id === state.filterFuncionario);
             }
             
+            // A lista de funcionários já está ordenada por nome pelo listener onSnapshot
+
+            // 4. Renderizar HTML
             const formatOptions = { day: 'numeric', month: 'short' };
             const inicioStr = inicioSemana.toLocaleDateString('pt-BR', formatOptions);
             const fimStr = fimSemana.toLocaleDateString('pt-BR', formatOptions);
@@ -984,9 +1073,13 @@
                 </button>
             </div>`;
 
+            // Grelha
             html += `<div class="overflow-x-auto">`;
+            // Definimos uma largura mínima para a grelha para garantir que o overflow funcione
             html += `<div class="grid min-w-[1200px]" style="grid-template-columns: 180px repeat(7, minmax(140px, 1fr));">`;
             
+            // --- Cabeçalho (Eixo X) ---
+            // Adicionado 'left-0' e 'z-20' para fixar o canto superior esquerdo
             html += `<div class="p-2 font-bold bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 left-0 z-20">Funcionário</div>`;
             diasDaSemanaArray.forEach(dia => {
                 html += `<div class="p-2 font-bold text-center ${dia.isHoje ? 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)]' : 'bg-[var(--color-bg-alt)]'} border-b border-r border-stone-200 sticky top-0 z-10">
@@ -995,6 +1088,7 @@
                 </div>`;
             });
 
+            // --- Linhas de Dados (Eixo Y e Células) ---
             if (funcionariosParaExibir.length === 0) {
                  html += `<div class="col-span-8 p-10 text-center text-stone-500">
                     Nenhum funcionário encontrado para os filtros selecionados.
@@ -1002,11 +1096,14 @@
             }
 
             funcionariosParaExibir.forEach(func => {
+                // Eixo Y (Cabeçalho da Linha)
+                // Adicionado 'bg-white' e 'z-10' para garantir que fica por cima e opaco
                 html += `<div class="p-2 border-b border-r border-stone-200 sticky left-0 bg-[var(--color-card)] z-10 flex flex-col items-center justify-center">
                     <img src="${func.fotoUrl || 'https://placehold.co/60x60/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-12 h-12 rounded-full object-cover mb-1">
                     <span class="text-sm font-medium text-center truncate w-full">${func.nome}</span>
                 </div>`;
                 
+                // Células de Dados
                 diasDaSemanaArray.forEach(dia => {
                     const cellAtividades = atividadesDaSemana.filter(at => 
                         at.funcionarioId === func.id && at.data === dia.key
@@ -1017,7 +1114,7 @@
 
                     cellAtividades.forEach(at => {
                         const cliente = state.clientes.find(c => c.id === at.clienteId);
-                        const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
+                        const statusClasses = getStatusCardClasses(at.status || 'Pendente'); // Pega as classes de cor
                         
                         html += `
                             <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
@@ -1027,16 +1124,17 @@
                             </div>`;
                     });
 
-                    html += `</div></div>`;
+                    html += `</div></div>`; // Fim da célula
                 });
             });
 
-            html += `</div></div></div>`; 
+            html += `</div></div></div>`; // Fim da grelha, overflow e container
             
             dom.pautasContent.innerHTML = html;
         }
 
         function renderLista() {
+            // A "lista" respeita o filtro de período (hoje, semana, todos)
             const atividades = getFilteredAtividades();
             let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
                 <table class="min-w-full divide-y divide-stone-200">
@@ -1057,6 +1155,7 @@
                 html += `<tr><td colspan="7" class="px-6 py-4 text-center text-stone-500">Nenhuma atividade encontrada para os filtros selecionados.</td></tr>`;
             }
 
+            // Ordenar por data
             atividades.sort((a, b) => new Date(a.data) - new Date(b.data));
 
             atividades.forEach(at => {
@@ -1088,11 +1187,13 @@
         function renderDashboard() {
             if (!dom.dashboardContent) return;
 
-            const atividades = getFilteredAtividades(); 
+            // 1. Processar dados
+            const atividades = getFilteredAtividades(); // Usa atividades filtradas
             const totalAtividades = atividades.length;
 
+            // --- Dados para Gráfico 1: Status Geral (Pie Chart) ---
             const statusCounts = { 'Pendente': 0, 'Em Andamento': 0, 'Concluído': 0, 'Bloqueado': 0 };
-            let totalConcluidas = 0; 
+            let totalConcluidas = 0; // Para o novo gráfico
             
             atividades.forEach(at => {
                 const status = at.status || 'Pendente';
@@ -1106,22 +1207,27 @@
             const statusLabels = Object.keys(statusCounts);
             const statusData = Object.values(statusCounts);
             
+            // Cores para o gráfico de pizza (Etapas)
             const statusColors = {
-                'Pendente': '#F97422', 
+                'Pendente': '#F97422', // Laranja
                 'Em Andamento': '#10B981', // Verde
                 'Concluído': 'var(--color-accent)', // Cor do Tema
-                'Bloqueado': '#EF4444'   
+                'Bloqueado': '#EF4444'   // Vermelho
             };
             
+            // --- Dados para Gráfico 2: Pauta Geral (Progresso) ---
             const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
             const percentagemRestante = 100 - percentagemConcluidas;
 
+            // --- Dados para Gráfico 3: Progresso por Tarefa (Círculos) ---
             const tarefaProgress = [];
+            // Itera sobre as tarefas padrão cadastradas
             state.tarefasPadrao.forEach(tarefa => {
                 const taskName = tarefa.nome;
                 let totalParaTarefa = 0;
                 let concluidasParaTarefa = 0;
 
+                // Filtra as atividades (já filtradas globalmente) para esta tarefa
                 atividades.forEach(at => {
                     if (at.titulo === taskName) {
                         totalParaTarefa++;
@@ -1142,14 +1248,18 @@
             });
 
 
+            // 2. Renderizar HTML dos containers
             dom.dashboardContent.innerHTML = `
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Gráfico 1 e 2: Status Geral e Pauta Geral -->
                     <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
                         <h2 class="text-xl font-semibold mb-4 text-stone-700">Status Geral das Atividades</h2>
                         <p class="mb-4 text-stone-600">Total de atividades (com filtros): <strong>${totalAtividades}</strong></p>
                         
+                        <!-- Container para os dois gráficos -->
                         <div class="flex flex-col md:flex-row justify-around items-center gap-6">
                             
+                            <!-- Gráfico 1: Status por Etapa (Pie) -->
                             <div class="max-w-xs w-full"> 
                                 <h3 class="text-center font-medium text-stone-600 mb-2">Por Etapa</h3>
                                 <div class="relative max-w-[280px] mx-auto">
@@ -1157,10 +1267,12 @@
                                 </div>
                             </div>
                             
+                            <!-- Gráfico 2: Pauta Geral (Doughnut) -->
                             <div class="max-w-xs w-full">
                                 <h3 class="text-center font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
                                 <div class="relative max-w-[200px] mx-auto">
                                     <canvas id="pautaDoughnutChart"></canvas>
+                                    <!-- Texto de Percentagem no Meio -->
                                     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                                         <span class="text-3xl font-bold text-[var(--color-accent-dark)]">${Math.round(percentagemConcluidas)}%</span>
                                     </div>
@@ -1169,11 +1281,13 @@
                         </div>
                     </div>
                     
+                    <!-- Gráfico 3: Progresso por Tarefa Padrão -->
                     <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
                         <h2 class="text-xl font-semibold mb-4 text-stone-700">Progresso por Tarefa Padrão</h2>
                         <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
                         <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-96 pr-2">
                             ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
+                                // O gradiente cônico cria o efeito de círculo de progresso
                                 const gradient = `conic-gradient(var(--color-accent) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
                                 
                                 return `
@@ -1192,12 +1306,14 @@
                     </div>
                 </div>`;
 
+            // 3. Criar ou atualizar Gráfico 1 (Pie - Etapas)
+            // Configurações globais do Chart.js para a nova fonte
             const rootStyle = getComputedStyle(document.documentElement);
             Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family').trim() || "'Inter', sans-serif";
             Chart.defaults.font.size = 12;
 
             const ctxPie = document.getElementById('statusPieChart')?.getContext('2d');
-            if (state.dashboardChart) state.dashboardChart.destroy(); 
+            if (state.dashboardChart) state.dashboardChart.destroy(); // Destroi o gráfico 1
             
             if (ctxPie) {
                 state.dashboardChart = new Chart(ctxPie, {
@@ -1235,6 +1351,7 @@
                 });
             }
 
+            // 4. Criar ou atualizar Gráfico 2 (Doughnut - Pauta Geral)
             const ctxDoughnut = document.getElementById('pautaDoughnutChart')?.getContext('2d');
             if (state.dashboardDoughnutChart) state.dashboardDoughnutChart.destroy(); 
             
@@ -1246,8 +1363,8 @@
                         datasets: [{
                             data: [percentagemConcluidas, percentagemRestante],
                             backgroundColor: [
-                                'var(--color-accent)', 
-                                '#e5e7eb'  
+                                'var(--color-accent)', // Usa a cor do tema
+                                '#e5e7eb'  // Cinza
                             ],
                             borderColor: '#E5E7EB', // Alterado para cinza claro
                             borderWidth: 2,
@@ -1256,7 +1373,7 @@
                     },
                     options: {
                         responsive: true,
-                        cutout: '75%', 
+                        cutout: '75%', // Define a espessura do "anel"
                         plugins: {
                             legend: { display: false },
                             tooltip: { 
@@ -1279,6 +1396,7 @@
         function renderAdminFuncionarios() {
             let html = `<div class="flex justify-end mb-4">
                 <button data-action="add" class="btn-primary">
+                    <!-- Ícone removido -->
                     Adicionar Funcionário
                 </button>
             </div>`;
@@ -1433,6 +1551,7 @@
             let title = '';
             let html = '';
 
+            // Pequeno atraso para garantir que o DOM está pronto
             await new Promise(res => setTimeout(res, 50));
 
             if (type === 'atividade') {
@@ -1504,13 +1623,16 @@
                             <input type="email" id="email" name="email" value="${func.email || ''}" class="form-input">
                         </div>
                         
+                        <!-- Alterado para Upload de Ficheiro -->
                         <div>
                             <label for="fotoFile" class="block text-sm font-medium text-stone-700">Foto</label>
                             ${func.fotoUrl ? `<img src="${func.fotoUrl}" alt="Foto atual" class="w-20 h-20 rounded-full object-cover my-2 shadow-md">` : '<div class="w-20 h-20 rounded-full bg-stone-100 flex items-center justify-center my-2 border"><svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg></div>'}
                             <input type="file" id="fotoFile" name="fotoFile" class="mt-1 block w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[var(--color-accent-light)] file:text-[var(--color-accent-dark)] hover:file:bg-[var(--color-accent-light-hover)] file:cursor-pointer" accept="image/png, image/jpeg">
+                            <!-- Input escondido para manter a URL atual se não for alterada -->
                             <input type="hidden" id="fotoUrl" name="fotoUrl" value="${func.fotoUrl || ''}">
                             <p class="text-xs text-stone-500 mt-1">Envie um ficheiro (PNG, JPG). Deixe em branco para manter a foto atual.</p>
                         </div>
+                        <!-- Fim da Alteração -->
                         
                         <div>
                             <label for="cargoId" class="block text-sm font-medium text-stone-700">Cargo</label>
@@ -1560,6 +1682,7 @@
             dom.modalLoading.classList.add('hidden');
             dom.modal.classList.remove('hidden');
 
+            // Adicionar listener para o select de tarefas padrão
             if (type === 'atividade') {
                 const selectTarefa = document.getElementById('tarefaPadrao');
                 const inputTitulo = document.getElementById('titulo');
@@ -1583,6 +1706,7 @@
             const form = document.getElementById('modal-form');
             if (!form.reportValidity()) return;
 
+            // Mostra estado de carregamento no botão
             dom.btnModalSave.disabled = true;
             dom.btnModalSave.innerHTML = 'Salvando...';
 
@@ -1591,15 +1715,17 @@
             
             let collection;
             let fileToUpload = null;
-            let existingFotoUrl = data.fotoUrl || ""; 
+            let existingFotoUrl = data.fotoUrl || ""; // Pega a URL existente do input escondido
 
             if (state.editingCollection === 'atividade') collection = atividadesCollection;
             if (state.editingCollection === 'funcionarios') {
                 collection = funcionariosCollection;
+                // Verifica se um novo ficheiro foi enviado
                 const fotoFileInput = document.getElementById('fotoFile');
                 if (fotoFileInput && fotoFileInput.files.length > 0) {
                     fileToUpload = fotoFileInput.files[0];
                 }
+                // Não queremos salvar o 'fotoFile' (que é um FileList) no Firestore
                 delete data.fotoFile; 
             }
             if (state.editingCollection === 'cargos') collection = cargosCollection;
@@ -1608,27 +1734,33 @@
 
             if (!collection) {
                 showToast('Erro: Tipo de coleção desconhecido.', 'error');
+                // Restaura o botão em caso de erro
                 dom.btnModalSave.disabled = false;
                 dom.btnModalSave.innerHTML = 'Salvar';
                 return;
             }
 
             try {
+                // --- Lógica de Upload ---
                 if (fileToUpload) {
                     dom.btnModalSave.innerHTML = 'Enviando foto...';
+                    // Cria uma referência única para o ficheiro
                     const storageRef = ref(storage, `funcionarios_fotos/${userId}_${Date.now()}_${fileToUpload.name}`);
                     const snapshot = await uploadBytes(storageRef, fileToUpload);
                     const downloadURL = await getDownloadURL(snapshot.ref);
-                    data.fotoUrl = downloadURL; 
+                    data.fotoUrl = downloadURL; // Sobrescreve data.fotoUrl com a nova URL
                 } else {
-                    data.fotoUrl = existingFotoUrl; 
+                    data.fotoUrl = existingFotoUrl; // Garante que a URL antiga seja mantida se nenhum ficheiro novo foi enviado
                 }
+                // --- Fim da Lógica de Upload ---
 
                 if (state.editingId) {
+                    // Atualizar
                     const docRef = doc(db, collection.path, state.editingId);
                     await updateDoc(docRef, data);
                     showToast('Item atualizado com sucesso!', 'success');
                 } else {
+                    // Adicionar
                     await addDoc(collection, data);
                     showToast('Item salvo com sucesso!', 'success');
                 }
@@ -1637,6 +1769,7 @@
                 console.error("Erro ao salvar:", error);
                 showToast(`Erro ao salvar: ${error.message}`, 'error');
             } finally {
+                // Restaura o botão, independentemente do resultado
                 dom.btnModalSave.disabled = false;
                 dom.btnModalSave.innerHTML = 'Salvar';
             }
@@ -1694,6 +1827,7 @@
         // --- Função para Adicionar Dados Iniciais (Mock) ---
         async function seedInitialData() {
             try {
+                // 1. Verificar/Adicionar CARGOS
                 let cargoDesignerId, cargoEdicaoId;
                 const cargoQuery = query(cargosCollection, where("nome", "==", "Designer"));
                 const cargoSnapshot = await getDocs(cargoQuery);
@@ -1709,6 +1843,7 @@
                     cargoSnapshot.docs.forEach(doc => {
                         if (doc.data().nome === "Designer") cargoDesignerId = doc.id;
                     });
+                    // Garante que ambos os cargos existam
                     const cargoQuery2 = query(cargosCollection, where("nome", "==", "Edição"));
                     const cargoSnapshot2 = await getDocs(cargoQuery2);
                     if (cargoSnapshot2.empty) {
@@ -1719,14 +1854,16 @@
                     }
                 }
 
+                // 2. Verificar/Adicionar TAREFAS PADRÃO
                 const tarefaQuery = query(tarefasPadraoCollection, where("nome", "==", "Planejamento"));
                 const tarefaSnapshot = await getDocs(tarefaQuery);
                 if (tarefaSnapshot.empty) {
                     console.log("Adicionando dados iniciais (Tarefas)...");
                     await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
-                    await addDoc(tarefasPadraoCollection, { nome: "Design" }); 
+                    await addDoc(tarefasPadraoCollection, { nome: "Design" }); // Corrigido de "desinger"
                 }
 
+                // 3. Verificar/Adicionar FUNCIONÁRIOS
                 const funcQuery = query(funcionariosCollection, where("nome", "==", "Sabrina"));
                 const funcSnapshot = await getDocs(funcQuery);
                 
@@ -1787,7 +1924,7 @@
             --color-accent-darker: #CC9F24;
             --color-accent-light: #FFF8E5;
             --color-accent-light-hover: #FFF1CD;
-            --color-accent-text: #1f2937; 
+            --color-accent-text: #1f2937; /* Texto escuro para botões amarelos */
         }
         
         .theme-laranja {
@@ -2085,7 +2222,10 @@
         </div>
     </div>
     
-    <!-- Mensagem de Erro de Configuração (Removida) -->
+    <!-- Mensagem de Erro de Configuração (Adicionada de volta) -->
+    <div id="config-error" class="hidden p-10 text-center max-w-lg mx-auto mt-10 bg-white shadow-lg rounded-lg border border-red-200">
+        <!-- O conteúdo será preenchido pelo JavaScript -->
+    </div>
 
 </body>
 </html>
