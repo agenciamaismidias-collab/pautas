@@ -49,7 +49,23 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         // --- Configuração ---
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEFAULT_FALLBACK_KEY", authDomain: "DEFAULT.firebaseapp.com", projectId: "DEFAULT_PROJECT_ID" };
+        const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        
+        // Configuração real do Firebase (fornecida pelo usuário)
+        // Esta configuração funcionará no GitHub.
+        const userFirebaseConfig = {
+          apiKey: "AIzaSyBZ76yd8RbRQVjbJ115QqL3oDztxedq0OY",
+          authDomain: "agmm-16a91.firebaseapp.com",
+          projectId: "agmm-16a91",
+          storageBucket: "agmm-16a91.firebasestorage.app",
+          messagingSenderId: "784096179999",
+          appId: "1:784096179999:web:239ebaf0547bd88e24622a",
+          measurementId: "G-B56XH56SLB"
+        };
+
+        // Usa a config do ambiente (pré-visualização) se disponível, senão, usa a config do usuário (GitHub)
+        const firebaseConfig = firebaseConfigFromEnv || userFirebaseConfig;
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'sgap-default-app';
         
         let db, auth, userId;
@@ -208,6 +224,8 @@
 
         async function initFirebase() {
             try {
+                // VERIFICAÇÃO DE CONFIG (REMOVIDA - Config real foi adicionada)
+                
                 setLogLevel('Debug');
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -1291,7 +1309,7 @@
                             <img src="${func.fotoUrl || 'https://placehold.co/40x40/E0E8F0/4A698E?text=?'}" alt="Foto de ${func.nome}" class="w-10 h-10 rounded-full object-cover">
                         </td>
                         <td class="table-cell">${func.email || 'N/A'}</td>
-                        <td class="table-cell">${cargo ? cargo.nome : 'Sem cargo'}</td>
+                        <td class="table-cell">${cargo ? cargo.nome : 'N/A'}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <button data-action="edit" data-id="${func.id}" class="btn-link">Editar</button>
                             <button data-action="delete" data-id="${func.id}" class="btn-link-danger">Excluir</button>
@@ -2062,10 +2080,12 @@
                 </div>
             </div>
              <div class="flex justify-end p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
-                <button id="theme-reset" class="btn-secondary">Restaurar Padrões</Gbutton>
+                <button id="theme-reset" class="btn-secondary">Restaurar Padrões</button>
             </div>
         </div>
     </div>
+    
+    <!-- Mensagem de Erro de Configuração (Removida) -->
 
 </body>
 </html>
