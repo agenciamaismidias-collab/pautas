@@ -1375,11 +1375,14 @@
                     const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                     
                     html += `
-                        <div class="status-card-base ${statusClasses}"
-                             data-action="edit" data-id="${at.id}">
-                            <strong class="block truncate">${at.titulo}</strong>
-                            <span class="block opacity-80 truncate">${func ? func.nome : '...'}</span>
-                            <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                        <!-- 1. Card base sem data-action -->
+                        <div class="status-card-base ${statusClasses}">
+                            <!-- 2. Wrapper clicável para Edição -->
+                            <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
+                                <strong class="block truncate">${at.titulo}</strong>
+                                <span class="block opacity-80 truncate">${func ? func.nome : '...'}</span>
+                                <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                            </div>
                         </div>`;
                 });
                 
@@ -1487,10 +1490,13 @@
                         const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                         
                         html += `
-                            <div class="status-card-base ${statusClasses}"
-                                 data-action="edit" data-id="${at.id}">
-                                <strong class="block truncate">${at.titulo}</strong>
-                                <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                            <!-- 1. Card base sem data-action -->
+                            <div class="status-card-base ${statusClasses}">
+                                <!-- 2. Wrapper clicável para Edição -->
+                                <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
+                                    <strong class="block truncate">${at.titulo}</strong>
+                                    <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
+                                </div>
                             </div>`;
                     });
 
@@ -1554,24 +1560,28 @@
                         const dataFormatada = new Date(at.data + 'T12:00:00').toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
                         
                         html += `
-                            <div class="relative status-card-base ${statusClasses}"
-                                 data-action="edit" data-id="${at.id}">
+                            <!-- 1. O card base NÃO tem mais data-action="edit" -->
+                            <div class="relative status-card-base ${statusClasses}">
                                 
-                                <button data-action="delete" data-id="${at.id}" class="absolute top-0 right-0 p-0.5 text-red-500 hover:text-red-800 opacity-50 hover:opacity-100">
+                                <!-- 2. Botão Excluir (funciona independentemente) -->
+                                <button data-action="delete" data-id="${at.id}" class="absolute top-0 right-0 p-0.5 text-red-500 hover:text-red-800 opacity-50 hover:opacity-100 z-10">
                                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                 </button>
                                 
-                                <strong class="block truncate pr-3">${func ? func.nome : 'N/A'}</strong> 
-                                <span class="block opacity-80 truncate">${dataFormatada}</span>
-                                <span class="block opacity-80 truncate">${at.status || 'Pendente'}</span>
+                                <!-- 3. Wrapper clicável para Edição -->
+                                <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
+                                    <strong class="block truncate pr-3">${func ? func.nome : 'N/A'}</strong> 
+                                    <span class="block opacity-80 truncate">${dataFormatada}</span>
+                                    <span class="block opacity-80 truncate">${at.status || 'Pendente'}</span>
+                                </div>
                             </div>`;
                     });
 
-                    html += `</div></div>`; 
+                    html += `</div></div>`; // Fim da célula
                 });
             });
 
-            html += `</div></div></div>`; 
+            html += `</div></div></div>`; // Fim da grelha, overflow e container
             
             targetElement.innerHTML = html; 
         }
@@ -1758,7 +1768,7 @@
                 </div>`;
 
             const rootStyle = getComputedStyle(document.documentElement);
-            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
+            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif"; // Corrigido
             Chart.defaults.font.size = 12;
             Chart.defaults.color = rootStyle.getPropertyValue('--color-text-primary') || '#1f2937';
 
@@ -2317,7 +2327,7 @@
                         <div>
                             <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Layout do Dashboard</h3>
                             <div>
-                                <label for="dashboardLayout" class="block text-sm font-medium text-stone-700">Modo de Visualização</slabel>
+                                <label for="dashboardLayout" class="block text-sm font-medium text-stone-700">Modo de Visualização</label>
                                 <select id="dashboardLayout" name="dashboardLayout" class="form-select mt-1">
                                     <option value="lg:grid-cols-3" ${s.dashboardLayout === 'lg:grid-cols-3' ? 'selected' : ''}>3 Colunas (Padrão)</option>
                                     <option value="lg:grid-cols-2" ${s.dashboardLayout === 'lg:grid-cols-2' ? 'selected' : ''}>2 Colunas</option>
@@ -2718,8 +2728,6 @@
         
         function openDeleteModal(id, collection) {
             if (state.userRole === 'leitor') return;
-            // Admins podem excluir tudo
-            // Editores só podem excluir atividades
             if (state.userRole === 'editor' && collection !== 'atividade') {
                 showToast("Apenas 'admins' podem excluir este tipo de item.", 'error');
                 return;
@@ -2755,8 +2763,6 @@
                         dom.confirmDeleteModal.classList.add('hidden');
                         return;
                     }
-                    // NOTA: Isto apenas remove o usuário da base de dados (remove a função),
-                    // não remove o usuário do Firebase Auth.
                 }
 
                 const docRef = doc(db, collectionPath, state.editingId);
@@ -2788,7 +2794,6 @@
 
         // --- Função para Adicionar Dados Iniciais (Mock) ---
         async function seedInitialData() {
-            // Esta função só roda se NENHUM cargo estiver cadastrado
             try {
                 const cargoQuery = query(cargosCollection, limit(1));
                 const cargoSnapshot = await getDocs(cargoQuery);
