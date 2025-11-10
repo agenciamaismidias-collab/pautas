@@ -137,6 +137,7 @@
             dom.loginView = document.getElementById('login-view'); 
             dom.mainViewPautas = document.getElementById('main-view-pautas');
             dom.mainViewDashboard = document.getElementById('main-view-dashboard');
+            dom.mainViewVisualEquipe = document.getElementById('main-view-visual-equipe'); // NOVO
             dom.mainViewAdmin = document.getElementById('main-view-admin');
             
             // Menu Lateral
@@ -150,6 +151,8 @@
             dom.menuPautasText = document.getElementById('menu-pautas-text');
             dom.menuDashboard = document.getElementById('menu-dashboard');
             dom.menuDashboardText = document.getElementById('menu-dashboard-text');
+            dom.menuVisualEquipe = document.getElementById('menu-visual-equipe'); // NOVO
+            dom.menuVisualEquipeText = document.getElementById('menu-visual-equipe-text'); // NOVO
             dom.menuAdmin = document.getElementById('menu-admin');
             dom.menuAdminText = document.getElementById('menu-admin-text');
             dom.menuTema = document.getElementById('menu-tema');
@@ -164,6 +167,13 @@
             dom.adminContent = document.getElementById('admin-content');
             dom.pautasNav = document.getElementById('pautas-nav');
             dom.adminNav = document.getElementById('admin-nav');
+            
+            // NOVO: Wrappers para Visual Equipe
+            dom.visualDashboardWrapper = document.getElementById('visual-dashboard-wrapper');
+            dom.visualListaWrapper = document.getElementById('visual-lista-wrapper');
+            
+            // NOVO: Rodapé
+            dom.footerLogo = document.getElementById('footer-logo');
             
             // Botão Sair
             dom.btnLogout = document.getElementById('btn-logout');
@@ -407,7 +417,13 @@
 
         // --- Nova Função: Aplicar Personalização Global ---
         function applySiteSettings(settings) {
-            if (!settings) return; // Usa padrões do CSS
+            if (!settings) {
+                // Aplica tema padrão do localStorage se não houver settings
+                applyThemeFromLocalStorage();
+                return;
+            }
+
+            state.siteSettings = settings; // Salva as configurações no estado
 
             const root = document.documentElement;
             // Aplica Cores
@@ -417,6 +433,7 @@
             root.style.setProperty('--color-text-secondary', shadeColor(settings.colorText || '#1f2937', 40));
             
             const accentColor = settings.colorAccent || '#648AAE';
+            state.themeColor = accentColor; // Atualiza a cor base do tema
             root.style.setProperty('--color-accent', accentColor);
             root.style.setProperty('--color-accent-dark', shadeColor(accentColor, -20));
             root.style.setProperty('--color-accent-darker', shadeColor(accentColor, -30));
@@ -433,34 +450,51 @@
             root.style.setProperty('--color-sidebar-bg-hover', shadeColor(sidebarColor, sidebarLuminance > 140 ? -10 : 10));
             root.style.setProperty('--color-sidebar-text-hover', sidebarTextColor);
 
-            // Aplica Cores de Status Globais
-            const colorPendente = settings.colorStatusPendente || '#F97422'; // Laranja Padrão
+            // --- Aplica Cores de Status Globais ---
+            const colorConcluido = settings.colorStatusConcluido || 'var(--color-accent)'; // NOVO
+            root.style.setProperty('--color-status-concluido', colorConcluido);
+            root.style.setProperty('--color-status-concluido-light', shadeColor(colorConcluido, 80));
+            root.style.setProperty('--color-status-concluido-dark', shadeColor(colorConcluido, -30));
+            
+            const colorPendente = settings.colorStatusPendente || '#F97422'; 
             root.style.setProperty('--color-status-pendente', colorPendente);
             root.style.setProperty('--color-status-pendente-light', shadeColor(colorPendente, 80));
             root.style.setProperty('--color-status-pendente-dark', shadeColor(colorPendente, -30));
 
-            const colorEmAndamento = settings.colorStatusEmAndamento || '#10B981'; // Verde Padrão
+            const colorEmAndamento = settings.colorStatusEmAndamento || '#10B981'; 
             root.style.setProperty('--color-status-em-andamento', colorEmAndamento);
             root.style.setProperty('--color-status-em-andamento-light', shadeColor(colorEmAndamento, 80));
             root.style.setProperty('--color-status-em-andamento-dark', shadeColor(colorEmAndamento, -30));
             
-            const colorBloqueado = settings.colorStatusBloqueado || '#EF4444'; // Vermelho Padrão
+            const colorBloqueado = settings.colorStatusBloqueado || '#EF4444'; 
             root.style.setProperty('--color-status-bloqueado', colorBloqueado);
             root.style.setProperty('--color-status-bloqueado-light', shadeColor(colorBloqueado, 80));
             root.style.setProperty('--color-status-bloqueado-dark', shadeColor(colorBloqueado, -30));
             
-            // 'Concluído' usa a cor Accent
-            root.style.setProperty('--color-status-concluido', 'var(--color-accent)');
-            root.style.setProperty('--color-status-concluido-light', 'var(--color-accent-light)');
-            root.style.setProperty('--color-status-concluido-dark', 'var(--color-accent-dark)');
-
             // Aplica Textos
             if (dom.sidebarTitleH1) dom.sidebarTitleH1.innerHTML = settings.sidebarTitle || '<span class="font-normal">Gestão de</span> Pautas';
             if (dom.menuPautasText) dom.menuPautasText.textContent = settings.menuPautas_text || 'Pautas';
             if (dom.btnLancarAtividadeMenuText) dom.btnLancarAtividadeMenuText.textContent = settings.menuLancar_text || 'Lançar Atividade';
             if (dom.menuDashboardText) dom.menuDashboardText.textContent = settings.menuDashboard_text || 'Dashboard';
+            if (dom.menuVisualEquipeText) dom.menuVisualEquipeText.textContent = settings.menuVisualEquipe_text || 'Visual Equipe'; // NOVO
             if (dom.menuAdminText) dom.menuAdminText.textContent = settings.menuAdmin_text || 'Administrativo';
             if (dom.menuTemaText) dom.menuTemaText.textContent = settings.menuTema_text || 'Tema';
+            
+            // Aplica Logo
+            if (dom.footerLogo) {
+                if (settings.logoUrl) {
+                    dom.footerLogo.src = settings.logoUrl;
+                    dom.footerLogo.style.display = 'block';
+                } else {
+                    dom.footerLogo.style.display = 'none';
+                }
+            }
+            
+            // Aplica Layout do Dashboard
+            if (dom.dashboardContent) {
+                dom.dashboardContent.classList.remove('lg:grid-cols-2', 'lg:grid-cols-3');
+                dom.dashboardContent.classList.add(settings.dashboardLayout || 'lg:grid-cols-3');
+            }
         }
 
         function setupFirestoreListeners() {
@@ -528,6 +562,7 @@
             // Navegação
             dom.menuPautas.addEventListener('click', () => switchMainView('pautas'));
             dom.menuDashboard.addEventListener('click', () => switchMainView('dashboard'));
+            dom.menuVisualEquipe.addEventListener('click', () => switchMainView('visual-equipe')); // NOVO
             dom.menuAdmin.addEventListener('click', () => switchMainView('admin'));
             dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
             dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
@@ -676,15 +711,19 @@
             }
         }
         
-        // --- Nova Função: Salvar Personalização ---
+        // --- Função: Salvar Personalização ---
         async function handleSaveSettings() {
             if (state.userRole !== 'admin') return;
             
-            dom.btnModalSave.disabled = true;
+            const saveBtn = document.getElementById('btn-save-settings');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Salvando...';
                 
             const form = document.getElementById('settings-form');
             if (!form) return;
             
+            // Pega o ficheiro da logo ANTES de ler o FormData
+            const logoFile = form.querySelector('#logoFile')?.files[0];
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
             
@@ -695,16 +734,36 @@
                 colorText: data.colorText,
                 colorSidebar: data.colorSidebar,
                 colorAccent: data.colorAccent,
+                // Cores de Status
+                colorStatusConcluido: data.colorStatusConcluido, // NOVO
+                colorStatusPendente: data.colorStatusPendente,
+                colorStatusEmAndamento: data.colorStatusEmAndamento,
+                colorStatusBloqueado: data.colorStatusBloqueado,
+                // Layout
+                dashboardLayout: data.dashboardLayout, // NOVO
                 // Textos
                 sidebarTitle: data.sidebarTitle,
                 menuPautas_text: data.menuPautas_text,
                 menuLancar_text: data.menuLancar_text,
                 menuDashboard_text: data.menuDashboard_text,
+                menuVisualEquipe_text: data.menuVisualEquipe_text, // NOVO
                 menuAdmin_text: data.menuAdmin_text,
                 menuTema_text: data.menuTema_text,
             };
 
             try {
+                // --- NOVO: Upload da Logo ---
+                if (logoFile) {
+                    // Usamos 'config/logo' para ter um nome de ficheiro fixo e fácil de encontrar
+                    const storageRef = ref(storage, 'config/logo'); 
+                    const snapshot = await uploadBytes(storageRef, logoFile);
+                    settings.logoUrl = await getDownloadURL(snapshot.ref);
+                } else {
+                    // Mantém a logo antiga se nenhuma nova for enviada
+                    settings.logoUrl = state.siteSettings.logoUrl || ''; 
+                }
+                // --- FIM NOVO ---
+                
                 const settingsDocRef = doc(db, settingsPath, "globalConfig");
                 await setDoc(settingsDocRef, settings, { merge: true }); // Merge para não sobrescrever
                 showToast("Personalização salva com sucesso!", 'success');
@@ -712,7 +771,8 @@
                 console.error("Erro ao salvar personalização:", error);
                 showToast("Erro ao salvar personalização.", 'error');
             } finally {
-                dom.btnModalSave.disabled = false;
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Salvar Personalização';
             }
         }
         
@@ -899,6 +959,9 @@
         }
 
         function applyThemeFromLocalStorage() {
+            // Não faz nada se as configurações do site forem carregadas
+            if (state.siteSettings && Object.keys(state.siteSettings).length > 0) return;
+            
             const themeName = localStorage.getItem('sgap_theme_name') || 'sereno';
             const font = localStorage.getItem('sgap_theme_font') || 'Inter';
             const fontSize = localStorage.getItem('sgap_theme_fontsize') || '15px';
@@ -944,6 +1007,7 @@
             
             if (dom.menuPautas) dom.menuPautas.classList.toggle('menu-btn-active', state.currentMainView === 'pautas');
             if (dom.menuDashboard) dom.menuDashboard.classList.toggle('menu-btn-active', state.currentMainView === 'dashboard');
+            if (dom.menuVisualEquipe) dom.menuVisualEquipe.classList.toggle('menu-btn-active', state.currentMainView === 'visual-equipe');
             if (dom.menuAdmin) dom.menuAdmin.classList.toggle('menu-btn-active', state.currentMainView === 'admin');
 
             if (dom.pautasNav) {
@@ -1024,10 +1088,13 @@
             
             dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
             dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
+            dom.menuVisualEquipe.classList.toggle('menu-btn-active', view === 'visual-equipe'); // NOVO
             dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
 
+            // Exibe a view correta
             dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
             dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
+            dom.mainViewVisualEquipe.classList.toggle('hidden', view !== 'visual-equipe'); // NOVO
             dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
             
             render();
@@ -1064,6 +1131,8 @@
                 renderPautas();
             } else if (state.currentMainView === 'dashboard') {
                 renderDashboard();
+            } else if (state.currentMainView === 'visual-equipe') { // NOVO
+                renderVisualEquipe();
             } else if (state.currentMainView === 'admin') {
                 renderAdmin();
             }
@@ -1078,7 +1147,7 @@
             if(dom.btnLancarAtividadeMenu) dom.btnLancarAtividadeMenu.classList.toggle('hidden', !canEdit);
             if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !isAdmin); 
             
-            // Filtros Globais visíveis para Pautas e Dashboard
+            // Filtros Globais visíveis para Pautas, Dashboard e Visual Equipe
             if(dom.filtrosGlobaisContainer) {
                 const isFiltroHidden = (state.currentMainView === 'admin');
                 dom.filtrosGlobaisContainer.classList.toggle('hidden', isFiltroHidden);
@@ -1103,7 +1172,7 @@
             } else if (state.currentAdminView === 'usuarios') {
                 renderAdminUsuarios();
             } else if (state.currentAdminView === 'todas-pautas') {
-                renderAdminTodasPautas(); // Adicionado
+                renderAdminTodasPautas(); 
             } else if (state.currentAdminView === 'personalizacao') {
                 renderAdminPersonalizacao();
             }
@@ -1155,7 +1224,7 @@
             let agora = new Date(); 
             let atividadesFiltradas = state.atividades;
         
-            if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard' || (state.currentPautasView === 'calendario' && !ignoreFilters.includes('periodo'))) {
+            if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard' || state.currentMainView === 'visual-equipe' || (state.currentPautasView === 'calendario' && !ignoreFilters.includes('periodo'))) {
                 if (state.filterPeriodo === 'hoje') {
                     const hojeStr = agora.toISOString().split('T')[0];
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
@@ -1179,7 +1248,7 @@
                         const dataAt = new Date(at.data + 'T12:00:00'); 
                         return dataAt >= inicioSemana && dataAt <= fimSemana;
                     });
-                } else if (state.filterPeriodo === 'mes') { // Adicionado
+                } else if (state.filterPeriodo === 'mes') { 
                     const mesAtual = agora.getMonth();
                     const anoAtual = agora.getFullYear();
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
@@ -1243,7 +1312,7 @@
             } else if (state.currentPautasView === 'semana') {
                 renderSemana();
             } else if (state.currentPautasView === 'lista') {
-                renderLista();
+                renderLista(dom.pautasContent);
             }
         }
 
@@ -1461,7 +1530,7 @@
                     Nenhum cliente cadastrado.
                  </div>`;
             } else if (tarefasParaExibir.length === 0) {
-                 html += `<div class="col-span-1 p-10 text-center text-stone-500">
+                 html += `<div class="col-span-${clientesParaExibir.length + 1 || 1} p-10 text-center text-stone-500">
                     Nenhuma tarefa padrão cadastrada.
                  </div>`;
             }
@@ -1579,7 +1648,7 @@
 
 
             targetElement.innerHTML = ` 
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="grid grid-cols-1 ${state.siteSettings.dashboardLayout || 'lg:grid-cols-3'} gap-6">
                 
                     <!-- Coluna 1: KPIs Principais -->
                     <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm space-y-6">
@@ -1771,6 +1840,148 @@
                 });
             }
         }
+
+        // --- NOVA FUNÇÃO (Dashboard Simplificado para Visual Equipe) ---
+        function renderDashboard_Slim(targetElement) {
+            if (!targetElement) return;
+
+            const atividades = getFilteredAtividades(); 
+            const totalAtividades = atividades.length;
+
+            // --- Calcular Status (Necessário para Pauta Geral) ---
+            let totalConcluidas = 0;
+            atividades.forEach(at => {
+                if (at.status === 'Concluído') {
+                    totalConcluidas++;
+                }
+            });
+            
+            // --- Gráfico "Pauta Geral" ---
+            const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
+            const percentagemRestante = 100 - percentagemConcluidas;
+
+            // --- Gráfico "Progresso por Tarefa" ---
+            const tarefaProgress = [];
+            state.tarefasPadrao.forEach(tarefa => {
+                const taskName = tarefa.nome;
+                let totalParaTarefa = 0;
+                let concluidasParaTarefa = 0;
+
+                atividades.forEach(at => {
+                    if (at.titulo === taskName) {
+                        totalParaTarefa++;
+                        if (at.status === 'Concluído') {
+                            concluidasParaTarefa++;
+                        }
+                    }
+                });
+
+                const percentage = (totalParaTarefa === 0) ? 0 : Math.round((concluidasParaTarefa / totalParaTarefa) * 100);
+                
+                tarefaProgress.push({
+                    nome: taskName,
+                    percentage: percentage,
+                    total: totalParaTarefa,
+                    concluidas: concluidasParaTarefa
+                });
+            });
+
+            // --- Renderizar HTML (Versão Slim) ---
+            targetElement.innerHTML = ` 
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                    <!-- Coluna 1: Pauta Geral -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm space-y-6">
+                        <h3 class="text-lg font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
+                        <div class="relative max-w-[200px] mx-auto">
+                            <canvas id="pautaDoughnutChart_slim"></canvas> <!-- ID Único -->
+                            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <span class="text-3xl font-bold text-[var(--color-status-concluido-dark)]">${Math.round(percentagemConcluidas)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Coluna 2: Progresso por Tarefa Padrão -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Progresso por Tarefa Padrão</h2>
+                        <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-[500px] pr-2">
+                            ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
+                                const gradient = `conic-gradient(var(--color-status-concluido) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
+                                
+                                return `
+                                <div class="flex flex-col items-center">
+                                    <div class="relative w-24 h-24 rounded-full flex items-center justify-center" style="background: ${gradient};">
+                                        <div class="w-20 h-20 bg-[var(--color-card)] rounded-full flex items-center justify-center shadow-inner">
+                                            <span class="text-xl font-bold text-[var(--color-status-concluido-dark)]">${task.percentage}%</span>
+                                        </div>
+                                    </div>
+                                    <span class="mt-2 text-sm font-medium text-stone-700 text-center truncate w-full" title="${task.nome}">${task.nome}</span>
+                                    <span class="text-xs text-stone-500">${task.concluidas} / ${task.total} ativ.</span>
+                                </div>
+                                `;
+                            }).join('') : '<p class="text-stone-500 col-span-full text-center">Nenhuma tarefa padrão encontrada com atividades nos filtros atuais.</p>'}
+                        </div>
+                    </div>
+                </div>`;
+
+            // --- Lógica Chart.js (Versão Slim) ---
+            const rootStyle = getComputedStyle(document.documentElement);
+            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
+            Chart.defaults.font.size = 12;
+            Chart.defaults.color = rootStyle.getPropertyValue('--color-text-primary') || '#1f2937';
+
+            // Gráfico Pauta Geral
+            const ctxDoughnut = targetElement.querySelector('#pautaDoughnutChart_slim')?.getContext('2d');
+            
+            if (ctxDoughnut) {
+                new Chart(ctxDoughnut, { // Cria um novo gráfico, não guarda no estado global
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Concluído', 'Restante'],
+                        datasets: [{
+                            data: [percentagemConcluidas, percentagemRestante],
+                            backgroundColor: [
+                                'var(--color-status-concluido)',
+                                '#e5e7eb'
+                            ],
+                            borderColor: '#E5E7EB',
+                            borderWidth: 2,
+                            hoverBorderWidth: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        cutout: '75%', 
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { 
+                                enabled: true,
+                                callbacks: {
+                                    label: (context) => {
+                                        const label = context.label || '';
+                                        const value = context.raw;
+                                        return ` ${label}: ${value.toFixed(1)}%`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        // --- FIM DA NOVA FUNÇÃO ---
+
+        // --- NOVA FUNÇÃO ---
+        function renderVisualEquipe() {
+            if (!dom.visualDashboardWrapper || !dom.visualListaWrapper) return;
+            console.log("Renderizando Visual Equipe...");
+            // Renderiza a lista na sua metade (AGORA EM CIMA)
+            renderLista(dom.visualListaWrapper);
+            // Renderiza o dashboard slim na sua metade (AGORA EM BAIXO)
+            renderDashboard_Slim(dom.visualDashboardWrapper);
+        }
+        // --- FIM NOVA FUNÇÃO ---
 
 
         function renderAdminFuncionarios() {
@@ -1977,20 +2188,16 @@
             dom.adminContent.innerHTML = html;
         }
         
-        // --- NOVA FUNÇÃO ---
         function renderAdminTodasPautas() {
-            // 1. Criar o HTML da shell (busca + tabela)
             let html = `
                 <div class="bg-[var(--color-card)] rounded-lg shadow-sm p-6">
                     <h2 class="text-xl font-semibold text-stone-700 mb-4">Gerir Todas as Pautas (Atividades)</h2>
                     
-                    <!-- Barra de Busca -->
                     <div class="flex mb-4">
                         <input type="search" id="admin-pautas-search" class="form-input flex-grow" placeholder="Buscar por título, funcionário ou cliente...">
                         <button data-action="search-pautas" class="btn-primary ml-2">Buscar</button>
                     </div>
 
-                    <!-- Tabela de Pautas -->
                     <div class="overflow-x-auto">
                         <table class="min-w-full divide-y divide-stone-200">
                             <thead class="bg-[var(--color-bg-alt)]">
@@ -2004,7 +2211,6 @@
                                 </tr>
                             </thead>
                             <tbody id="admin-pautas-tbody" class="bg-[var(--color-card)] divide-y divide-stone-200">
-                                <!-- Conteúdo será preenchido por JS -->
                             </tbody>
                         </table>
                     </div>
@@ -2012,7 +2218,6 @@
             
             dom.adminContent.innerHTML = html;
 
-            // 2. Preencher a tabela (filtrada)
             const searchTermInput = document.getElementById('admin-pautas-search');
             const searchTerm = searchTermInput ? searchTermInput.value.toLowerCase() : '';
             
@@ -2022,8 +2227,8 @@
                 return at.titulo.toLowerCase().includes(searchTerm) || 
                        func.includes(searchTerm) || 
                        cli.includes(searchTerm);
-            }) : [...state.atividades]) // Usa uma cópia se não filtrar
-            .sort((a, b) => new Date(b.data) - new Date(a.data)); // Ordena por data, mais recente primeiro
+            }) : [...state.atividades]) 
+            .sort((a, b) => new Date(b.data) - new Date(a.data)); 
 
             const tbody = document.getElementById('admin-pautas-tbody');
             if (!tbody) return;
@@ -2049,10 +2254,8 @@
                 }).join('');
             }
             
-            // Restaura o valor da busca
             if(searchTermInput) searchTermInput.value = searchTerm;
         }
-        // --- FIM DA NOVA FUNÇÃO ---
         
         function renderAdminPersonalizacao() {
             const s = state.siteSettings || {};
@@ -2090,7 +2293,11 @@
                         <!-- Seção de Cores de Status -->
                         <div>
                             <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Cores dos Gráficos (Status)</h3>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label for="colorStatusConcluido" class="block text-sm font-medium text-stone-700">Concluído</label>
+                                    <input type="color" id="colorStatusConcluido" name="colorStatusConcluido" value="${s.colorStatusConcluido || '#648AAE'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
                                 <div>
                                     <label for="colorStatusPendente" class="block text-sm font-medium text-stone-700">Pendente</label>
                                     <input type="color" id="colorStatusPendente" name="colorStatusPendente" value="${s.colorStatusPendente || '#F97422'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
@@ -2104,9 +2311,30 @@
                                     <input type="color" id="colorStatusBloqueado" name="colorStatusBloqueado" value="${s.colorStatusBloqueado || '#EF4444'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
                                 </div>
                             </div>
-                            <p class="text-sm text-stone-600 mt-2">A cor 'Concluído' é definida pela 'Cor Destaque (Accent)' global.</p>
                         </div>
                         
+                        <!-- Layout do Dashboard -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Layout do Dashboard</h3>
+                            <div>
+                                <label for="dashboardLayout" class="block text-sm font-medium text-stone-700">Modo de Visualização</slabel>
+                                <select id="dashboardLayout" name="dashboardLayout" class="form-select mt-1">
+                                    <option value="lg:grid-cols-3" ${s.dashboardLayout === 'lg:grid-cols-3' ? 'selected' : ''}>3 Colunas (Padrão)</option>
+                                    <option value="lg:grid-cols-2" ${s.dashboardLayout === 'lg:grid-cols-2' ? 'selected' : ''}>2 Colunas</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Upload de Logo -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Logo da Empresa (Rodapé)</h3>
+                            <div>
+                                <label for="logoFile" class="block text-sm font-medium text-stone-700">Ficheiro da Logo</label>
+                                <input type="file" id="logoFile" name="logoFile" class="mt-1 block w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[var(--color-accent-light)] file:text-[var(--color-accent-dark)] hover:file:bg-[var(--color-accent-light-hover)] file:cursor-pointer" accept="image/png, image/jpeg, image/svg+xml">
+                                ${s.logoUrl ? `<img src="${s.logoUrl}" alt="Logo Atual" class="h-12 mt-4 bg-stone-100 p-2 rounded-md">` : '<p class="text-sm text-stone-500 mt-2">Nenhuma logo definida.</p>'}
+                            </div>
+                        </div>
+
                         <!-- Seção de Textos -->
                         <div>
                             <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Textos do Menu</h3>
@@ -2126,6 +2354,10 @@
                                 <div>
                                     <label for="menuDashboard_text" class="block text-sm font-medium text-stone-700">Botão Dashboard</label>
                                     <input type="text" id="menuDashboard_text" name="menuDashboard_text" value="${s.menuDashboard_text || 'Dashboard'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuVisualEquipe_text" class="block text-sm font-medium text-stone-700">Botão Visual Equipe</label>
+                                    <input type="text" id="menuVisualEquipe_text" name="menuVisualEquipe_text" value="${s.menuVisualEquipe_text || 'Visual Equipe'}" class="form-input">
                                 </div>
                                 <div>
                                     <label for="menuAdmin_text" class="block text-sm font-medium text-stone-700">Botão Admin</label>
@@ -2710,7 +2942,7 @@
         .status-bloqueado { background-color: var(--color-status-bloqueado-light); color: var(--color-status-bloqueado-dark); }
         .status-default { background-color: #e5e7eb; color: #4b5563; }
         
-        /* NOVO: Estilo para KPI Cards */
+        /* Estilo para KPI Cards */
         .kpi-card {
             @apply flex justify-between items-center p-3 bg-[var(--color-bg-alt)] rounded-md;
         }
@@ -2776,6 +3008,11 @@
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>
                     <span id="menu-dashboard-text" class="sidebar-text">Dashboard</span>
                 </button>
+                
+                <button id="menu-visual-equipe" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    <span id="menu-visual-equipe-text" class="sidebar-text">Visual Equipe</span>
+                </button>
 
                 <button id="menu-admin" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -2792,7 +3029,7 @@
             <div class="mt-auto">
                 <button id="sidebar-toggle-button" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
-                    <!-- Texto "Minimizar" removido -->
+                    <span class="sidebar-text text-left"></span>
                 </button>
                 
                 <button id="btn-logout" class="menu-btn justify-start w-full">
@@ -2857,6 +3094,26 @@
                     </div>
                 </div>
                 
+                <!-- VIEW: VISUAL EQUIPE (NOVA) -->
+                <div id="main-view-visual-equipe" class="hidden">
+                    <div class="flex flex-col gap-6"> <!-- Alterado de lg:flex-row -->
+                        <!-- Wrapper Direito para Lista Geral (Movido para Cima) -->
+                        <div id="visual-lista-wrapper">
+                             <h2 class="text-xl font-semibold text-stone-700 mb-4">Lista Geral (Visão Equipe)</h2>
+                            <div id="lista-content-visual">
+                                <!-- renderLista() vai preencher aqui -->
+                            </div>
+                        </div>
+                        <!-- Wrapper Esquerdo para Dashboard (Movido para Baixo) -->
+                        <div id="visual-dashboard-wrapper">
+                            <h2 class="text-xl font-semibold text-stone-700 mb-4">Dashboard (Visão Equipe)</h2>
+                            <div id="dashboard-content-visual">
+                                <!-- renderDashboard_Slim() vai preencher aqui -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- VIEW: ADMIN -->
                 <div id="main-view-admin" class="hidden">
                     <div class="flex items-center justify-between mb-4">
@@ -2875,6 +3132,11 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- NOVO: Rodapé com Logo -->
+            <footer class="mt-8 text-center p-4 border-t border-stone-200">
+                <img id="footer-logo" src="" alt="Logo da Empresa" class="h-12 mx-auto" style="display: none;">
+            </footer>
         </main>
     </div>
 
