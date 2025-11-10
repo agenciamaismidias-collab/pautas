@@ -1333,6 +1333,9 @@
             
             const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
             
+            // Adicionado: Verificar permissão de edição
+            const canEdit = (state.userRole === 'admin' || state.userRole === 'editor');
+            
             let html = `<div class="p-4 bg-[var(--color-card)] rounded-lg shadow-sm">`;
             html += `<div class="flex justify-between items-center mb-4">
                 <button data-action="prev-month" class="btn-icon">
@@ -1375,10 +1378,17 @@
                     const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                     
                     html += `
-                        <!-- 1. Card base sem data-action -->
-                        <div class="status-card-base ${statusClasses}">
-                            <!-- 2. Wrapper clicável para Edição -->
-                            <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
+                        <!-- 1. Card base agora é 'relative' -->
+                        <div class="relative status-card-base ${statusClasses}">
+                            <!-- 2. Botão Excluir (Apenas se pode editar) -->
+                            ${canEdit ? `
+                            <button data-action="delete" data-id="${at.id}" class="absolute top-0 right-0 p-0.5 text-red-500 hover:text-red-800 opacity-50 hover:opacity-100 z-10">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                            ` : ''}
+                            
+                            <!-- 3. Wrapper clicável para Edição (com padding p/ não ficar sob o 'X') -->
+                            <div data-action="edit" data-id="${at.id}" class="cursor-pointer pr-3">
                                 <strong class="block truncate">${at.titulo}</strong>
                                 <span class="block opacity-80 truncate">${func ? func.nome : '...'}</span>
                                 <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
@@ -1442,6 +1452,9 @@
             const fimStr = fimSemana.toLocaleDateString('pt-BR', formatOptions);
             const anoStr = inicioSemana.getFullYear();
 
+            // Adicionado: Verificar permissão de edição
+            const canEdit = (state.userRole === 'admin' || state.userRole === 'editor');
+
             let html = `<div class="bg-[var(--color-card)] rounded-lg shadow-sm">`;
             html += `<div class="flex justify-between items-center mb-4 p-4 border-b">
                 <button data-action="prev-week" class="btn-icon">
@@ -1490,10 +1503,17 @@
                         const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                         
                         html += `
-                            <!-- 1. Card base sem data-action -->
-                            <div class="status-card-base ${statusClasses}">
-                                <!-- 2. Wrapper clicável para Edição -->
-                                <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
+                            <!-- 1. Card base agora é 'relative' -->
+                            <div class="relative status-card-base ${statusClasses}">
+                                <!-- 2. Botão Excluir (Apenas se pode editar) -->
+                                ${canEdit ? `
+                                <button data-action="delete" data-id="${at.id}" class="absolute top-0 right-0 p-0.5 text-red-500 hover:text-red-800 opacity-50 hover:opacity-100 z-10">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                                ` : ''}
+
+                                <!-- 3. Wrapper clicável para Edição (com padding p/ não ficar sob o 'X') -->
+                                <div data-action="edit" data-id="${at.id}" class="cursor-pointer pr-3">
                                     <strong class="block truncate">${at.titulo}</strong>
                                     <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
                                 </div>
@@ -1514,6 +1534,9 @@
             
             const tarefasParaExibir = [...state.tarefasPadrao].sort((a, b) => a.nome.localeCompare(b.nome));
             const clientesParaExibir = [...state.clientes].sort((a, b) => a.nome.localeCompare(b.nome));
+
+            // Adicionado: Verificar permissão de edição
+            const canEdit = (state.userRole === 'admin' || state.userRole === 'editor');
 
             let html = `<div class="bg-[var(--color-card)] rounded-lg shadow-sm">`;
             html += `<div class="p-4 border-b">
@@ -1571,10 +1594,10 @@
                                 <!-- 3. Wrapper clicável para Edição -->
                                 <div data-action="edit" data-id="${at.id}" class="cursor-pointer">
                                     <strong class="block truncate pr-3">${func ? func.nome : 'N/A'}</strong> 
-                                    <span class="block opacity-80 truncate">${dataFormatada}</span>
-                                    <span class="block opacity-80 truncate">${at.status || 'Pendente'}</span>
-                                </div>
-                            </div>`;
+                                <span class="block opacity-80 truncate">${dataFormatada}</span>
+                                <span class="block opacity-80 truncate">${at.status || 'Pendente'}</span>
+                            </div>
+                        </div>`;
                     });
 
                     html += `</div></div>`; // Fim da célula
