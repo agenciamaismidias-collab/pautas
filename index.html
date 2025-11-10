@@ -17,15 +17,17 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-        // Lógica de autenticação alterada para Login real
+        // Lógica de autenticação
         import {
             getAuth,
             onAuthStateChanged,
             createUserWithEmailAndPassword,
             signInWithEmailAndPassword,
             signOut,
-            updateProfile // Adicionado para salvar o nome
-            // Removido: GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken
+            updateProfile,
+            // Adicionados de volta para o bypass da pré-visualização
+            signInAnonymously,
+            signInWithCustomToken
         } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
         import {
             getFirestore,
@@ -77,13 +79,14 @@
         let firestoreListeners = []; // Array para guardar listeners
 
         // --- Collections ---
-        let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection, usuariosCollection;
+        let cargosCollection, funcionariosCollection, atividadesCollection, clientesCollection, tarefasPadraoCollection, usuariosCollection, settingsCollection;
         const cargosPath = `/artifacts/${appId}/public/data/cargos`;
         const funcionariosPath = `/artifacts/${appId}/public/data/funcionarios`;
         const atividadesPath = `/artifacts/${appId}/public/data/atividades`;
         const clientesPath = `/artifacts/${appId}/public/data/clientes`;
         const tarefasPadraoPath = `/artifacts/${appId}/public/data/tarefasPadrao`;
         const usuariosPath = `/artifacts/${appId}/public/data/usuarios`; // Para funções (roles)
+        const settingsPath = `/artifacts/${appId}/public/data/settings`; // Para personalização global
 
         // --- Estado Global da Aplicação ---
         const state = {
@@ -93,6 +96,7 @@
             clientes: [],
             tarefasPadrao: [],
             usuarios: [], // Para o painel de admin
+            siteSettings: {}, // Para personalização global
             currentMainView: 'pautas', 
             currentPautasView: 'calendario', 
             currentAdminView: 'funcionarios', 
@@ -133,19 +137,28 @@
             dom.loginView = document.getElementById('login-view'); // Novo Ecrã de Login
             dom.mainViewPautas = document.getElementById('main-view-pautas');
             dom.mainViewDashboard = document.getElementById('main-view-dashboard');
+            dom.mainViewVisualEquipe = document.getElementById('main-view-visual-equipe'); // NOVO
             dom.mainViewAdmin = document.getElementById('main-view-admin');
             
             // Menu Lateral
             dom.sidebarMenu = document.getElementById('sidebar-menu');
             dom.sidebarTitle = document.getElementById('sidebar-title');
+            dom.sidebarTitleH1 = document.getElementById('sidebar-title-h1');
             dom.sidebarToggleButton = document.getElementById('sidebar-toggle-button');
             dom.mainContentWrapper = document.getElementById('main-content-wrapper');
 
             dom.menuPautas = document.getElementById('menu-pautas');
+            dom.menuPautasText = document.getElementById('menu-pautas-text');
             dom.menuDashboard = document.getElementById('menu-dashboard');
+            dom.menuDashboardText = document.getElementById('menu-dashboard-text');
+            dom.menuVisualEquipe = document.getElementById('menu-visual-equipe'); // NOVO
+            dom.menuVisualEquipeText = document.getElementById('menu-visual-equipe-text'); // NOVO
             dom.menuAdmin = document.getElementById('menu-admin');
+            dom.menuAdminText = document.getElementById('menu-admin-text');
             dom.menuTema = document.getElementById('menu-tema');
+            dom.menuTemaText = document.getElementById('menu-tema-text');
             dom.btnLancarAtividadeMenu = document.getElementById('btn-lancar-atividade-menu');
+            dom.btnLancarAtividadeMenuText = document.getElementById('btn-lancar-atividade-menu-text');
 
             // Conteúdo
             dom.pautasContent = document.getElementById('pautas-content');
@@ -153,6 +166,13 @@
             dom.adminContent = document.getElementById('admin-content');
             dom.pautasNav = document.getElementById('pautas-nav');
             dom.adminNav = document.getElementById('admin-nav');
+            
+            // NOVO: Wrappers para Visual Equipe
+            dom.visualDashboardWrapper = document.getElementById('visual-dashboard-wrapper');
+            dom.visualListaWrapper = document.getElementById('visual-lista-wrapper');
+            
+            // NOVO: Rodapé
+            dom.footerLogo = document.getElementById('footer-logo');
             
             // Botão Sair
             dom.btnLogout = document.getElementById('btn-logout');
@@ -177,6 +197,7 @@
             dom.userIdDisplayWrapper = document.getElementById('user-id-wrapper'); 
             
             // Filtros
+            dom.filtrosGlobaisContainer = document.getElementById('filtros-globais'); // Wrapper dos filtros
             dom.filterPeriodo = document.getElementById('filter-periodo');
             dom.filterFuncionario = document.getElementById('filter-funcionario');
             dom.filterCargo = document.getElementById('filter-cargo');
@@ -198,12 +219,11 @@
             
             // Ecrã de Login
             dom.loginForm = document.getElementById('login-form');
-            dom.loginNameWrapper = document.getElementById('login-name-wrapper'); // Adicionado
-            dom.loginName = document.getElementById('login-name'); // Adicionado
+            dom.loginNameWrapper = document.getElementById('login-name-wrapper'); 
+            dom.loginName = document.getElementById('login-name'); 
             dom.loginEmail = document.getElementById('login-email');
             dom.loginPassword = document.getElementById('login-password');
             dom.loginEmailBtn = document.getElementById('login-email-btn');
-            // dom.loginGoogleBtn = document.getElementById('login-google-btn'); // Removido
             dom.loginMessage = document.getElementById('login-message');
             dom.loginTitle = document.getElementById('login-title');
             dom.toggleToCreate = document.getElementById('toggle-to-create');
@@ -264,6 +284,7 @@
                 clientesCollection = collection(db, clientesPath);
                 tarefasPadraoCollection = collection(db, tarefasPadraoPath);
                 usuariosCollection = collection(db, usuariosPath);
+                settingsCollection = collection(db, settingsPath);
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
@@ -280,6 +301,24 @@
                         dom.appView.classList.remove('hidden');
                         dom.loginView.classList.add('hidden');
 
+                        // --- ADICIONADO (CORREÇÃO): Listener de Personalização Global ---
+                        // Ouve as definições do site DEPOIS de autenticado
+                        const settingsDocRef = doc(db, settingsPath, "globalConfig");
+                        onSnapshot(settingsDocRef, (doc) => {
+                            if (doc.exists()) {
+                                console.log("Definições do site carregadas.");
+                                state.siteSettings = doc.data();
+                                applySiteSettings(state.siteSettings);
+                            } else {
+                                console.log("Nenhum documento de definições encontrado, a usar padrões.");
+                                applySiteSettings(null); // Aplica padrões
+                            }
+                        }, (error) => {
+                            console.error("Erro ao ouvir definições do site:", error);
+                            applySiteSettings(null); // Aplica padrões em caso de erro
+                        });
+                        // --- FIM ADICIONADO ---
+
                         await seedInitialData(); 
                         
                         setupFirestoreListeners();
@@ -291,9 +330,29 @@
                         state.userRole = null;
                         state.isAuthReady = false;
                         
-                        // Mostra login, esconde app
-                        dom.appView.classList.add('hidden');
-                        dom.loginView.classList.remove('hidden');
+                        // --- LÓGICA DE BYPASS DA PRÉ-VISUALIZAÇÃO ---
+                        const isPreview = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token);
+
+                        if (isPreview) {
+                            // MODO PRÉ-VISUALIZAÇÃO: Tenta login automático para bypassar o ecrã
+                            console.log("Modo de pré-visualização detetado. A tentar login automático...");
+                            try {
+                                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                    await signInWithCustomToken(auth, __initial_auth_token);
+                                } else {
+                                    await signInAnonymously(auth);
+                                }
+                            } catch (authError) {
+                                console.error("Erro no login automático de pré-visualização:", authError);
+                                dom.appView.classList.add('hidden');
+                                dom.loginView.classList.remove('hidden');
+                            }
+                        } else {
+                            // MODO PUBLICADO (GITHUB): Mostra o ecrã de login normal
+                            dom.appView.classList.add('hidden');
+                            dom.loginView.classList.remove('hidden');
+                        }
+                        // --- FIM DA LÓGICA DE BYPASS ---
                         
                         // Limpa listeners antigos se existirem
                         firestoreListeners.forEach(unsubscribe => unsubscribe());
@@ -317,14 +376,29 @@
                 state.userRole = userDoc.data().role;
             } else {
                 // Novo usuário
-                const adminQuery = query(usuariosCollection, where('role', '==', 'admin'));
+                const adminQuery = query(usuariosCollection, where('role', '==', 'admin'), limit(1));
                 const adminSnapshot = await getDocs(adminQuery);
                 
-                const newRole = adminSnapshot.empty ? 'admin' : 'leitor'; // Primeiro usuário = admin
-                const userName = user.displayName || user.email.split('@')[0];
+                // --- INÍCIO DA CORREÇÃO (Erro split null) ---
+                let newRole;
+                let userName;
+                let userEmail;
+
+                if (user.isAnonymous) {
+                    // Lógica para utilizador anónimo (bypass da pré-visualização)
+                    newRole = 'admin'; // Admin na pré-visualização para testar tudo
+                    userName = 'Admin (Preview)';
+                    userEmail = null; // Anónimo não tem email
+                } else {
+                    // Lógica de registo de email normal (para GitHub)
+                    newRole = adminSnapshot.empty ? 'admin' : 'leitor'; // Primeiro usuário = admin
+                    userName = user.displayName || (user.email ? user.email.split('@')[0] : 'Novo Usuário');
+                    userEmail = user.email;
+                }
+                // --- FIM DA CORREÇÃO ---
                 
                 const newUserProfile = {
-                    email: user.email,
+                    email: userEmail, 
                     nome: userName,
                     role: newRole,
                     uid: user.uid,
@@ -337,6 +411,92 @@
             console.log(`Usuário ${user.email || user.uid} logado com função: ${state.userRole}`);
         }
 
+        // --- Nova Função: Aplicar Personalização Global ---
+        function applySiteSettings(settings) {
+            if (!settings) {
+                // Aplica padrões se 'settings' for nulo
+                settings = {}; 
+                console.log("A aplicar definições padrão.");
+            }
+            
+            state.siteSettings = settings; // Salva no estado
+            
+            const root = document.documentElement;
+            
+            // Aplica Cores Globais
+            const accentColor = settings.colorAccent || '#648AAE';
+            state.themeColor = accentColor; // Atualiza a cor de referência do estado
+            root.style.setProperty('--color-accent', accentColor);
+            root.style.setProperty('--color-accent-dark', shadeColor(accentColor, -20));
+            root.style.setProperty('--color-accent-darker', shadeColor(accentColor, -30));
+            root.style.setProperty('--color-accent-light', shadeColor(accentColor, 70));
+            root.style.setProperty('--color-accent-light-hover', shadeColor(accentColor, 85));
+            const luminance = getLuminance(accentColor);
+            const textColor = luminance > 140 ? '#1f2937' : '#FFFFFF';
+            root.style.setProperty('--color-accent-text', textColor);
+            
+            root.style.setProperty('--color-bg', settings.colorBg || '#F4F7FA');
+            root.style.setProperty('--color-card', settings.colorCard || '#FFFFFF');
+            root.style.setProperty('--color-text-primary', settings.colorText || '#1f2937');
+            
+            const sidebarColor = settings.colorSidebar || accentColor; // Usa accent por defeito
+            root.style.setProperty('--color-sidebar', sidebarColor);
+            const sidebarLuminance = getLuminance(sidebarColor);
+            const sidebarTextColor = sidebarLuminance > 140 ? '#1f2937' : '#FFFFFF';
+            root.style.setProperty('--color-sidebar-text', sidebarTextColor);
+            root.style.setProperty('--color-sidebar-bg-hover', shadeColor(sidebarColor, sidebarLuminance > 140 ? -10 : 10));
+            root.style.setProperty('--color-sidebar-text-hover', sidebarTextColor);
+
+            // Aplica Cores de Status Globais
+            const colorConcluido = settings.colorStatusConcluido || accentColor; // Usa accent por defeito
+            root.style.setProperty('--color-status-concluido', colorConcluido);
+            root.style.setProperty('--color-status-concluido-light', shadeColor(colorConcluido, 80));
+            root.style.setProperty('--color-status-concluido-dark', shadeColor(colorConcluido, -30));
+
+            const colorPendente = settings.colorStatusPendente || '#F97422'; // Laranja Padrão
+            root.style.setProperty('--color-status-pendente', colorPendente);
+            root.style.setProperty('--color-status-pendente-light', shadeColor(colorPendente, 80));
+            root.style.setProperty('--color-status-pendente-dark', shadeColor(colorPendente, -30));
+
+            const colorEmAndamento = settings.colorStatusEmAndamento || '#10B981'; // Verde Padrão
+            root.style.setProperty('--color-status-em-andamento', colorEmAndamento);
+            root.style.setProperty('--color-status-em-andamento-light', shadeColor(colorEmAndamento, 80));
+            root.style.setProperty('--color-status-em-andamento-dark', shadeColor(colorEmAndamento, -30));
+            
+            const colorBloqueado = settings.colorStatusBloqueado || '#EF4444'; // Vermelho Padrão
+            root.style.setProperty('--color-status-bloqueado', colorBloqueado);
+            root.style.setProperty('--color-status-bloqueado-light', shadeColor(colorBloqueado, 80));
+            root.style.setProperty('--color-status-bloqueado-dark', shadeColor(colorBloqueado, -30));
+
+            // Aplica Textos
+            if (dom.sidebarTitleH1) dom.sidebarTitleH1.innerHTML = settings.sidebarTitle || '<span class="font-normal">Gestão de</span> Pautas';
+            if (dom.menuPautasText) dom.menuPautasText.textContent = settings.menuPautas_text || 'Pautas';
+            if (dom.btnLancarAtividadeMenuText) dom.btnLancarAtividadeMenuText.textContent = settings.menuLancar_text || 'Lançar Atividade';
+            if (dom.menuDashboardText) dom.menuDashboardText.textContent = settings.menuDashboard_text || 'Dashboard';
+            if (dom.menuVisualEquipeText) dom.menuVisualEquipeText.textContent = settings.menuVisualEquipe_text || 'Visual Equipe';
+            if (dom.menuAdminText) dom.menuAdminText.textContent = settings.menuAdmin_text || 'Administrativo';
+            if (dom.menuTemaText) dom.menuTemaText.textContent = settings.menuTema_text || 'Tema';
+            
+            // Aplica Logo
+            if (dom.footerLogo) {
+                if (settings.logoUrl) {
+                    dom.footerLogo.src = settings.logoUrl;
+                    dom.footerLogo.style.display = 'block';
+                } else {
+                    dom.footerLogo.style.display = 'none';
+                }
+            }
+            
+            // Aplica Layout do Dashboard
+            if (dom.dashboardContent) {
+                dom.dashboardContent.classList.remove('lg:grid-cols-2', 'lg:grid-cols-3');
+                dom.dashboardContent.classList.add(settings.dashboardLayout || 'lg:grid-cols-3');
+            }
+            
+            // Re-renderiza o dashboard para atualizar cores dos gráficos
+            renderDashboard();
+        }
+
         function setupFirestoreListeners() {
             // Limpa listeners antigos antes de criar novos
             firestoreListeners.forEach(unsubscribe => unsubscribe());
@@ -347,7 +507,6 @@
                  return;
             }
 
-            // Apenas 'leitor' e acima podem ler
             let listener;
             listener = onSnapshot(query(cargosCollection), (snapshot) => {
                 state.cargos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -397,7 +556,6 @@
         // --- Event Handlers ---
         function setupUIEventListeners() {
             // Ecrã de Login
-            // dom.loginGoogleBtn.addEventListener('click', handleGoogleLogin); // Removido
             dom.loginEmailBtn.addEventListener('click', handleEmailLoginOrCreate);
             dom.toggleToCreate.addEventListener('click', () => toggleLoginMode(true));
             dom.toggleToLogin.addEventListener('click', () => toggleLoginMode(false));
@@ -406,6 +564,7 @@
             // Navegação
             dom.menuPautas.addEventListener('click', () => switchMainView('pautas'));
             dom.menuDashboard.addEventListener('click', () => switchMainView('dashboard'));
+            dom.menuVisualEquipe.addEventListener('click', () => switchMainView('visual-equipe')); 
             dom.menuAdmin.addEventListener('click', () => switchMainView('admin'));
             dom.menuTema.addEventListener('click', () => dom.themeModal.classList.remove('hidden'));
             dom.btnLancarAtividadeMenu.addEventListener('click', () => openModal('atividade'));
@@ -473,8 +632,6 @@
             }
         }
         
-        // handleGoogleLogin removido
-        
         async function handleEmailLoginOrCreate(e) {
             e.preventDefault();
             const email = dom.loginEmail.value;
@@ -522,9 +679,12 @@
         }
 
         function handleAdminContentClick(e) {
-            // Verifica permissão
-            if (state.userRole !== 'admin') { // Apenas admin pode mexer no painel
-                showToast("Apenas 'admins' podem alterar dados aqui.", 'error');
+            // Apenas admin pode mexer no painel
+            if (state.userRole !== 'admin') {
+                // 'editores' podem lançar pautas, mas não mexer no admin
+                if (state.userRole === 'editor') {
+                    showToast("Apenas 'admins' podem aceder a esta área.", "error");
+                }
                 return;
             }
 
@@ -539,6 +699,8 @@
                     openModal(state.currentAdminView, id);
                 } else if (action === 'delete') {
                     openDeleteModal(id, state.currentAdminView);
+                } else if (action === 'save-settings') {
+                    handleSaveSettings();
                 }
             }
             
@@ -564,10 +726,74 @@
                 const userDocRef = doc(db, usuariosPath, uid);
                 await updateDoc(userDocRef, { role: newRole });
                 showToast("Função do usuário atualizada com sucesso.", 'success');
-                // O listener onSnapshot vai atualizar o 'state.usuarios' e chamar o renderAdmin()
             } catch (error) {
                 console.error("Erro ao atualizar função:", error);
                 showToast("Erro ao atualizar função.", 'error');
+            }
+        }
+        
+        // --- Nova Função: Salvar Personalização ---
+        async function handleSaveSettings() {
+            const btn = document.querySelector('button[data-action="save-settings"]');
+            if (!btn) return;
+            
+            btn.textContent = "Salvando...";
+            btn.disabled = true;
+            
+            try {
+                const form = document.getElementById('settings-form');
+                if (!form) return;
+                
+                // Pega o ficheiro da logo ANTES de ler o FormData
+                const logoFile = form.querySelector('#logoFile')?.files[0];
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+                
+                const settings = {
+                    // Cores Globais
+                    colorBg: data.colorBg,
+                    colorCard: data.colorCard,
+                    colorText: data.colorText,
+                    colorSidebar: data.colorSidebar,
+                    colorAccent: data.colorAccent,
+                    // Cores de Status
+                    colorStatusConcluido: data.colorStatusConcluido, 
+                    colorStatusPendente: data.colorStatusPendente,
+                    colorStatusEmAndamento: data.colorStatusEmAndamento,
+                    colorStatusBloqueado: data.colorStatusBloqueado,
+                    // Layout
+                    dashboardLayout: data.dashboardLayout, 
+                    // Textos
+                    sidebarTitle: data.sidebarTitle,
+                    menuPautas_text: data.menuPautas_text,
+                    menuLancar_text: data.menuLancar_text,
+                    menuDashboard_text: data.menuDashboard_text,
+                    menuVisualEquipe_text: data.menuVisualEquipe_text, 
+                    menuAdmin_text: data.menuAdmin_text,
+                    menuTema_text: data.menuTema_text,
+                };
+                
+                // --- Upload da Logo ---
+                if (logoFile) {
+                    const storageRef = ref(storage, 'config/logo'); 
+                    const snapshot = await uploadBytes(storageRef, logoFile);
+                    settings.logoUrl = await getDownloadURL(snapshot.ref);
+                } else {
+                    settings.logoUrl = state.siteSettings.logoUrl || ''; 
+                }
+                
+                const settingsDocRef = doc(db, settingsPath, "globalConfig");
+                await setDoc(settingsDocRef, settings, { merge: true });
+                
+                showToast("Personalização salva com sucesso!", 'success');
+                // O listener onSnapshot vai atualizar 'state.siteSettings' e chamar 'applySiteSettings'
+                
+            } catch (error) {
+                console.error("Erro ao salvar personalização:", error);
+                showToast("Erro ao salvar personalização.", 'error');
+            } finally {
+                btn.textContent = "Salvar Alterações";
+                btn.disabled = false;
             }
         }
         
@@ -585,11 +811,14 @@
                     return;
                 }
                 
-                if (action === 'edit') {
-                    openModal('atividade', id);
-                } else if (action === 'delete') {
+                // Previne o clique no card de abrir o modal quando se clica no X
+                if (action === 'delete') {
+                    e.stopPropagation(); // Impede o evento de "borbulhar" para o card
                     openDeleteModal(id, 'atividade');
+                } else if (action === 'edit') {
+                    openModal('atividade', id);
                 }
+                
             }
             
             // Navegação (permitida para todos)
@@ -639,7 +868,7 @@
             render();
         }
         
-        // --- Funções de Tema ---
+        // --- Funções de Tema (Modal) ---
         
         function handleColorChange(e) {
             const newColor = e.target.value;
@@ -678,6 +907,8 @@
                 }
                 
                 if (accentColor) {
+                    // Esta função aplica as cores ao CSS
+                    // Mas NÃO salva no Firestore. Isso é feito pela "Personalização Global"
                     state.themeColor = accentColor; 
                     root.style.setProperty('--color-accent', accentColor);
                     
@@ -729,6 +960,7 @@
         }
         
         function resetTheme() {
+            // Reseta o tema local
             localStorage.removeItem('sgap_theme_name');
             localStorage.removeItem('sgap_theme_custom_color');
             localStorage.removeItem('sgap_theme_font');
@@ -736,9 +968,13 @@
             
             document.documentElement.style.fontSize = '15px';
             applyTheme('sereno', 'Inter'); 
+            
+            // Avisa para resetar o global se quiser
+            showToast("Tema local resetado. Para resetar o tema de todos, use a Personalização Global.", "success");
         }
 
         function applyThemeFromLocalStorage() {
+            // Aplica o tema LOCAL. O global (do DB) vai sobrepor assim que carregar
             const themeName = localStorage.getItem('sgap_theme_name') || 'sereno';
             const font = localStorage.getItem('sgap_theme_font') || 'Inter';
             const fontSize = localStorage.getItem('sgap_theme_fontsize') || '15px';
@@ -785,6 +1021,7 @@
             // Aplicar estado da navegação (botões)
             if (dom.menuPautas) dom.menuPautas.classList.toggle('menu-btn-active', state.currentMainView === 'pautas');
             if (dom.menuDashboard) dom.menuDashboard.classList.toggle('menu-btn-active', state.currentMainView === 'dashboard');
+            if (dom.menuVisualEquipe) dom.menuVisualEquipe.classList.toggle('menu-btn-active', state.currentMainView === 'visual-equipe');
             if (dom.menuAdmin) dom.menuAdmin.classList.toggle('menu-btn-active', state.currentMainView === 'admin');
 
             if (dom.pautasNav) {
@@ -856,7 +1093,6 @@
 
         // --- Troca de Views ---
         function switchMainView(view) {
-            // Se 'leitor' tentar aceder ao 'admin', bloqueia
             if (view === 'admin' && state.userRole !== 'admin') {
                 showToast("Apenas 'admins' podem aceder a esta área.", "error");
                 return;
@@ -866,10 +1102,12 @@
             
             dom.menuPautas.classList.toggle('menu-btn-active', view === 'pautas');
             dom.menuDashboard.classList.toggle('menu-btn-active', view === 'dashboard');
+            dom.menuVisualEquipe.classList.toggle('menu-btn-active', view === 'visual-equipe');
             dom.menuAdmin.classList.toggle('menu-btn-active', view === 'admin');
 
             dom.mainViewPautas.classList.toggle('hidden', view !== 'pautas');
             dom.mainViewDashboard.classList.toggle('hidden', view !== 'dashboard');
+            dom.mainViewVisualEquipe.classList.toggle('hidden', view !== 'visual-equipe');
             dom.mainViewAdmin.classList.toggle('hidden', view !== 'admin');
             
             render();
@@ -905,7 +1143,9 @@
             if (state.currentMainView === 'pautas') {
                 renderPautas();
             } else if (state.currentMainView === 'dashboard') {
-                renderDashboard();
+                renderDashboard(dom.dashboardContent);
+            } else if (state.currentMainView === 'visual-equipe') { 
+                renderVisualEquipe();
             } else if (state.currentMainView === 'admin') {
                 renderAdmin();
             }
@@ -918,7 +1158,13 @@
             const isAdmin = (state.userRole === 'admin');
             
             if(dom.btnLancarAtividadeMenu) dom.btnLancarAtividadeMenu.classList.toggle('hidden', !canEdit);
-            if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !isAdmin); // Apenas admin vê o menu
+            if(dom.menuAdmin) dom.menuAdmin.classList.toggle('hidden', !isAdmin); 
+            
+            // Filtros Globais visíveis para Pautas, Dashboard e Visual Equipe
+            if(dom.filtrosGlobaisContainer) {
+                const isFiltroHidden = (state.currentMainView === 'admin');
+                dom.filtrosGlobaisContainer.classList.toggle('hidden', isFiltroHidden);
+            }
             
             if(!isAdmin && state.currentMainView === 'admin') {
                 switchMainView('pautas');
@@ -926,7 +1172,7 @@
         }
         
         function renderAdmin() {
-            if (!dom.adminContent || state.userRole !== 'admin') return; // Proteção
+            if (!dom.adminContent || state.userRole !== 'admin') return; 
             
             if (state.currentAdminView === 'funcionarios') {
                 renderAdminFuncionarios();
@@ -938,6 +1184,8 @@
                 renderAdminTarefas();
             } else if (state.currentAdminView === 'usuarios') {
                 renderAdminUsuarios();
+            } else if (state.currentAdminView === 'personalizacao') {
+                renderAdminPersonalizacao();
             }
         }
 
@@ -983,11 +1231,14 @@
             if(dom.filterTarefa) dom.filterTarefa.value = selTarefa;
         }
 
-        function getFilteredAtividades() {
+        function getFilteredAtividades(ignoreFilters = []) { // Modificado para aceitar filtros a ignorar
             let agora = new Date(); 
             let atividadesFiltradas = state.atividades;
         
-            if (state.currentPautasView === 'lista' || state.currentMainView === 'dashboard') {
+            // 1. Filtro de Período
+            const isPeriodAware = state.currentPautasView === 'lista' || state.currentMainView === 'dashboard' || state.currentMainView === 'visual-equipe';
+            
+            if (isPeriodAware && !ignoreFilters.includes('periodo')) {
                 if (state.filterPeriodo === 'hoje') {
                     const hojeStr = agora.toISOString().split('T')[0];
                     atividadesFiltradas = atividadesFiltradas.filter(at => {
@@ -1011,10 +1262,19 @@
                         const dataAt = new Date(at.data + 'T12:00:00'); 
                         return dataAt >= inicioSemana && dataAt <= fimSemana;
                     });
+                } else if (state.filterPeriodo === 'mes') { 
+                    const mesAtual = agora.getMonth();
+                    const anoAtual = agora.getFullYear();
+                    atividadesFiltradas = atividadesFiltradas.filter(at => {
+                        if (!at.data) return false;
+                        const dataAt = new Date(at.data + 'T12:00:00');
+                        return dataAt.getMonth() === mesAtual && dataAt.getFullYear() === anoAtual;
+                    });
                 } 
             }
 
-            if (state.filterCargo !== 'todos') {
+            // 2. Filtro de Cargo (Indireto)
+            if (!ignoreFilters.includes('cargo') && state.filterCargo !== 'todos') {
                 let funcionariosFiltradosPorCargo = [];
                 funcionariosFiltradosPorCargo = state.funcionarios
                     .filter(f => f.cargoId === state.filterCargo)
@@ -1025,19 +1285,22 @@
                 );
             }
             
-            if (state.filterFuncionario !== 'todos') {
+            // 3. Filtro de Funcionário (Direto)
+            if (!ignoreFilters.includes('funcionario') && state.filterFuncionario !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.funcionarioId === state.filterFuncionario
                 );
             }
             
-            if (state.filterCliente !== 'todos') {
+            // 4. Filtro de Cliente (Direto) - Modificado
+            if (!ignoreFilters.includes('cliente') && state.filterCliente !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.clienteId === state.filterCliente
                 );
             }
 
-            if (state.filterTarefa !== 'todos') {
+            // 5. Filtro de Tarefa (Direto, pelo Título) - Modificado
+            if (!ignoreFilters.includes('tarefa') && state.filterTarefa !== 'todos') {
                 atividadesFiltradas = atividadesFiltradas.filter(at => 
                     at.titulo === state.filterTarefa
                 );
@@ -1048,11 +1311,11 @@
         
         function getStatusCardClasses(status) {
             const statusMap = {
-                'Concluído': 'bg-green-100 text-green-800 hover:bg-green-200',
-                'Em Andamento': 'bg-[var(--color-accent-light)] text-[var(--color-accent-dark)] hover:bg-[var(--color-accent-light-hover)]',
-                'Pendente': 'bg-orange-100 text-orange-800 hover:bg-orange-200',
-                'Bloqueado': 'bg-red-100 text-red-800 hover:bg-red-200',
-                'default': 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                'Concluído': 'status-concluido',
+                'Em Andamento': 'status-em-andamento',
+                'Pendente': 'status-pendente',
+                'Bloqueado': 'status-bloqueado',
+                'default': 'status-default'
             };
             
             return statusMap[status] || statusMap['default'];
@@ -1065,7 +1328,7 @@
             } else if (state.currentPautasView === 'semana') {
                 renderSemana();
             } else if (state.currentPautasView === 'lista') {
-                renderLista();
+                renderLista(dom.pautasContent);
             }
         }
 
@@ -1128,7 +1391,7 @@
                     const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                     
                     html += `
-                        <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
+                        <div class="status-card-base ${statusClasses}"
                              data-action="edit" data-id="${at.id}">
                             <strong class="block truncate">${at.titulo}</strong>
                             <span class="block opacity-80 truncate">${func ? func.nome : '...'}</span>
@@ -1240,7 +1503,7 @@
                         const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
                         
                         html += `
-                            <div class="p-1.5 rounded-md text-xs cursor-pointer ${statusClasses}"
+                            <div class="status-card-base ${statusClasses}"
                                  data-action="edit" data-id="${at.id}">
                                 <strong class="block truncate">${at.titulo}</strong>
                                 <span class="block opacity-60 truncate">${cliente ? cliente.nome : 'Sem Cliente'}</span>
@@ -1256,83 +1519,135 @@
             dom.pautasContent.innerHTML = html;
         }
 
-        function renderLista() {
-            const atividades = getFilteredAtividades();
-            let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
-                <table class="min-w-full divide-y divide-stone-200">
-                    <thead class="bg-[var(--color-bg-alt)]">
-                        <tr>
-                            <th class="table-header">Data</th>
-                            <th class="table-header">Atividade</th>
-                            <th class="table-header">Funcionário</th>
-                            <th class="table-header">Cargo</th>
-                            <th class="table-header">Cliente</th>
-                            <th class="table-header">Status</th>
-                            <th class="table-header text-right">Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
+        function renderLista(targetElement = dom.pautasContent) { 
+            const atividades = getFilteredAtividades(['cliente', 'tarefa']);
             
-            if (atividades.length === 0) {
-                html += `<tr><td colspan="7" class="px-6 py-4 text-center text-stone-500">Nenhuma atividade encontrada para os filtros selecionados.</td></tr>`;
+            // Eixo X: Tarefas Padrão
+            const tarefasParaExibir = [...state.tarefasPadrao].sort((a, b) => a.nome.localeCompare(b.nome));
+            // Eixo Y: Clientes
+            const clientesParaExibir = [...state.clientes].sort((a, b) => a.nome.localeCompare(b.nome));
+
+            let html = `<div class="bg-[var(--color-card)] rounded-lg shadow-sm">`;
+            
+            // Se não for o target da 'Visual Equipe', mostra o título
+            if (targetElement === dom.pautasContent) {
+                html += `<div class="p-4 border-b">
+                    <h2 class="text-xl font-semibold text-stone-700">Matriz de Atividades</h2>
+                    <p class="text-sm text-stone-600">Visão geral de tarefas por cliente. (Filtros de Período, Funcionário e Cargo estão aplicados).</p>
+                </div>`;
+            }
+            
+            html += `<div class="overflow-x-auto">`;
+            html += `<div class="grid min-w-[1200px]" style="grid-template-columns: 180px repeat(${tarefasParaExibir.length > 0 ? tarefasParaExibir.length : 1}, minmax(140px, 1fr));">`;
+
+            // --- Cabeçalho (Eixo X) ---
+            html += `<div class="p-2 font-bold bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 left-0 z-20">Cliente / Tarefa</div>`;
+            if (tarefasParaExibir.length > 0) {
+                tarefasParaExibir.forEach(tarefa => {
+                    html += `<div class="p-2 font-bold text-center bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 z-10" title="${tarefa.nome}">
+                        <span class="truncate block">${tarefa.nome}</span>
+                    </div>`;
+                });
+            } else {
+                html += `<div class="p-2 font-bold text-center bg-[var(--color-bg-alt)] border-b border-r border-stone-200 sticky top-0 z-10">Nenhuma Tarefa Cadastrada</div>`;
+            }
+            
+            // --- Linhas de Dados (Eixo Y e Células) ---
+            if (clientesParaExibir.length === 0) {
+                 html += `<div class="col-span-${tarefasParaExibir.length + 1} p-10 text-center text-stone-500">
+                    Nenhum cliente cadastrado.
+                 </div>`;
             }
 
-            atividades.sort((a, b) => new Date(a.data) - new Date(b.data));
-
-            atividades.forEach(at => {
-                const func = state.funcionarios.find(f => f.id === at.funcionarioId);
-                const cargo = state.cargos.find(c => c.id === func?.cargoId);
-                const cliente = state.clientes.find(c => c.id === at.clienteId);
+            clientesParaExibir.forEach(cliente => {
+                // Eixo Y (Cabeçalho da Linha)
+                html += `<div class="p-2 border-b border-r border-stone-200 sticky left-0 bg-[var(--color-card)] z-10 flex flex-col items-start justify-center">
+                    <span class="text-sm font-medium text-stone-800 text-left truncate w-full">${cliente.nome}</span>
+                </div>`;
                 
-                html += `
-                    <tr>
-                        <td class="table-cell">${new Date(at.data + 'T12:00:00').toLocaleDateString('pt-BR')}</td>
-                        <td class="table-cell font-medium text-stone-900">${at.titulo}</td>
-                        <td class="table-cell">${func ? func.nome : 'N/A'}</td>
-                        <td class="table-cell">${cargo ? cargo.nome : 'N/A'}</td>
-                        <td class="table-cell">${cliente ? cliente.nome : 'N/A'}</td>
-                        <td class="table-cell">${at.status || 'Pendente'}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                            <button data-action="edit" data-id="${at.id}" class="btn-link">Editar</button>
-                            <button data-action="delete" data-id="${at.id}" class="btn-link-danger">Excluir</button>
-                        </td>
-                    </tr>`;
+                // Células de Dados
+                if (tarefasParaExibir.length > 0) {
+                    tarefasParaExibir.forEach(tarefa => {
+                        const cellAtividades = atividades.filter(at => 
+                            at.clienteId === cliente.id && at.titulo === tarefa.nome
+                        );
+                        
+                        html += `<div class="bg-[var(--color-card)] border-b border-r border-stone-200 min-h-[100px] p-1.5 flex flex-col">`;
+                        html += `<div class="flex-grow overflow-y-auto space-y-0.5 mt-1 pr-1">`;
+
+                        cellAtividades.forEach(at => {
+                            const func = state.funcionarios.find(f => f.id === at.funcionarioId);
+                            const statusClasses = getStatusCardClasses(at.status || 'Pendente'); 
+                            const dataFormatada = new Date(at.data + 'T12:00:00').toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+                            
+                            html += `
+                                <div class="relative status-card-base ${statusClasses}"
+                                     data-action="edit" data-id="${at.id}">
+                                    
+                                    <button data-action="delete" data-id="${at.id}" class="absolute top-0 right-0 p-0.5 text-red-500 hover:text-red-800 opacity-50 hover:opacity-100">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                    
+                                    <strong class="block truncate pr-3">${func ? func.nome : 'N/A'}</strong> 
+                                    <span class="block opacity-80 truncate">${dataFormatada}</span>
+                                    <span class="block opacity-80 truncate">${at.status || 'Pendente'}</span>
+                                </div>`;
+                        });
+
+                        html += `</div></div>`; // Fim da célula
+                    });
+                } else {
+                     html += `<div class="bg-[var(--color-card)] border-b border-r border-stone-200 min-h-[100px] p-1.5"></div>`;
+                }
             });
 
-            html += `</tbody></table></div>`;
-            dom.pautasContent.innerHTML = html;
+            html += `</div></div></div>`; 
+            
+            targetElement.innerHTML = html; 
         }
 
         // --- Fim das Funções de Pautas ---
 
-        function renderDashboard() {
-            if (!dom.dashboardContent || state.currentMainView !== 'dashboard') return;
+        function renderDashboard(targetElement = dom.dashboardContent) { 
+            if (!targetElement || (state.currentMainView !== 'dashboard' && state.currentMainView !== 'visual-equipe')) return;
 
             const atividades = getFilteredAtividades(); 
             const totalAtividades = atividades.length;
 
             const statusCounts = { 'Pendente': 0, 'Em Andamento': 0, 'Concluído': 0, 'Bloqueado': 0 };
-            let totalConcluidas = 0; 
             
             atividades.forEach(at => {
                 const status = at.status || 'Pendente';
                 if (statusCounts.hasOwnProperty(status)) {
                     statusCounts[status]++;
                 }
-                if (at.status === 'Concluído') {
-                    totalConcluidas++;
-                }
             });
             const statusLabels = Object.keys(statusCounts);
             const statusData = Object.values(statusCounts);
             
+            const totalConcluidas = statusCounts['Concluído'];
+            const totalPendentes = statusCounts['Pendente'];
+            
             const statusColors = {
-                'Pendente': '#F97422', // Laranja
-                'Em Andamento': '#10B981', // Verde
-                'Concluído': 'var(--color-accent)', // Cor do Tema
-                'Bloqueado': '#EF4444'   // Vermelho
+                'Pendente': 'var(--color-status-pendente)',
+                'Em Andamento': 'var(--color-status-em-andamento)',
+                'Concluído': 'var(--color-status-concluido)',
+                'Bloqueado': 'var(--color-status-bloqueado)'
             };
             
+            const clientesDoPeriodo = new Set(atividades.map(at => at.clienteId));
+            const totalClientesPeriodo = clientesDoPeriodo.size;
+            
+            const clientesNaSelecao = [...clientesDoPeriodo];
+            let clientes100Percent = 0;
+            clientesNaSelecao.forEach(clienteId => {
+                const atividadesDoCliente = atividades.filter(at => at.clienteId === clienteId);
+                const concluidasDoCliente = atividadesDoCliente.filter(at => at.status === 'Concluído');
+                if (atividadesDoCliente.length > 0 && atividadesDoCliente.length === concluidasDoCliente.length) {
+                    clientes100Percent++;
+                }
+            });
+
             const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
             const percentagemRestante = 100 - percentagemConcluidas;
 
@@ -1362,47 +1677,106 @@
             });
 
 
-            dom.dashboardContent.innerHTML = `
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Gráfico 1 e 2: Status Geral e Pauta Geral -->
-                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
-                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Status Geral das Atividades</h2>
-                        <p class="mb-4 text-stone-600">Total de atividades (com filtros): <strong>${totalAtividades}</strong></p>
-                        
-                        <div class="flex flex-col md:flex-row justify-around items-center gap-6">
-                            
-                            <div class="max-w-xs w-full"> 
-                                <h3 class="text-center font-medium text-stone-600 mb-2">Por Etapa</h3>
-                                <div class="relative max-w-[280px] mx-auto">
-                                    <canvas id="statusPieChart"></canvas>
+            targetElement.innerHTML = ` 
+                <div class="grid grid-cols-1 ${state.siteSettings.dashboardLayout || 'lg:grid-cols-3'} gap-6">
+                
+                    <!-- Coluna 1: KPIs Principais -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm space-y-6">
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
+                            <div class="relative max-w-[200px] mx-auto">
+                                <canvas id="pautaDoughnutChart"></canvas>
+                                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <span class="text-3xl font-bold text-[var(--color-status-concluido-dark)]">${Math.round(percentagemConcluidas)}%</span>
                                 </div>
                             </div>
-                            
-                            <div class="max-w-xs w-full">
-                                <h3 class="text-center font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
-                                <div class="relative max-w-[200px] mx-auto">
-                                    <canvas id="pautaDoughnutChart"></canvas>
-                                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <span class="text-3xl font-bold text-[var(--color-accent-dark)]">${Math.round(percentagemConcluidas)}%</span>
-                                    </div>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-600 mb-4">Resumo do Período</h3>
+                            <div class="space-y-3">
+                                <div class="kpi-card">
+                                    <span class="text-sm text-stone-600">Total de Demandas</span>
+                                    <span class="text-2xl font-semibold text-stone-800">${totalAtividades}</span>
+                                </div>
+                                <div class="kpi-card">
+                                    <span class="text-sm text-stone-600">Demandas Concluídas</span>
+                                    <span class="text-2xl font-semibold" style="color: var(--color-status-concluido-dark);">${totalConcluidas}</span>
+                                </div>
+                                <div class="kpi-card">
+                                    <span class="text-sm text-stone-600">Demandas Pendentes</span>
+                                    <span class="text-2xl font-semibold" style="color: var(--color-status-pendente-dark);">${totalPendentes}</span>
+                                </div>
+                                <div class="kpi-card">
+                                    <span class="text-sm text-stone-600">Clientes 100% Concluídos</span>
+                                    <span class="text-2xl font-semibold text-stone-800">${clientes100Percent}</span>
+                                </div>
+                                <div class="kpi-card">
+                                    <span class="text-sm text-stone-600">Clientes Ativos (no período)</span>
+                                    <span class="text-2xl font-semibold text-stone-800">${totalClientesPeriodo}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
+                
+                    <!-- Coluna 2: Status por Etapa -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Status por Etapa</h2>
+                        <p class="mb-4 text-stone-600">Total de atividades (com filtros): <strong>${totalAtividades}</strong></p>
+                        
+                        <div class="relative max-w-[280px] mx-auto">
+                            <canvas id="statusPieChart"></canvas>
+                        </div>
+                        
+                        <!-- Ponto 5: Checks por Setor -->
+                        <div class="mt-6">
+                            <h3 class="text-lg font-medium text-stone-600 mb-3 text-center">Checks por Setor</h3>
+                            <ul class="space-y-2">
+                                <li class="flex justify-between items-center text-sm">
+                                    <span class="flex items-center">
+                                        <span class="w-3 h-3 rounded-full mr-2" style="background-color: var(--color-status-concluido);"></span>
+                                        Concluído
+                                    </span>
+                                    <span class="font-semibold">${statusCounts['Concluído']}</span>
+                                </li>
+                                <li class="flex justify-between items-center text-sm">
+                                    <span class="flex items-center">
+                                        <span class="w-3 h-3 rounded-full mr-2" style="background-color: var(--color-status-pendente);"></span>
+                                        Pendente
+                                    </span>
+                                    <span class="font-semibold">${statusCounts['Pendente']}</span>
+                                </li>
+                                <li class="flex justify-between items-center text-sm">
+                                    <span class="flex items-center">
+                                        <span class="w-3 h-3 rounded-full mr-2" style="background-color: var(--color-status-em-andamento);"></span>
+                                        Em Andamento
+                                    </span>
+                                    <span class="font-semibold">${statusCounts['Em Andamento']}</span>
+                                </li>
+                                <li class="flex justify-between items-center text-sm">
+                                    <span class="flex items-center">
+                                        <span class="w-3 h-3 rounded-full mr-2" style="background-color: var(--color-status-bloqueado);"></span>
+                                        Bloqueado
+                                    </span>
+                                    <span class="font-semibold">${statusCounts['Bloqueado']}</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
                     
-                    <!-- Gráfico 3: Progresso por Tarefa Padrão -->
+                    <!-- Coluna 3: Progresso por Tarefa Padrão -->
                     <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
                         <h2 class="text-xl font-semibold mb-4 text-stone-700">Progresso por Tarefa Padrão</h2>
                         <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-96 pr-2">
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-[500px] pr-2">
                             ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
-                                const gradient = `conic-gradient(var(--color-accent) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
+                                const gradient = `conic-gradient(var(--color-status-concluido) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
                                 
                                 return `
                                 <div class="flex flex-col items-center">
                                     <div class="relative w-24 h-24 rounded-full flex items-center justify-center" style="background: ${gradient};">
                                         <div class="w-20 h-20 bg-[var(--color-card)] rounded-full flex items-center justify-center shadow-inner">
-                                            <span class="text-xl font-bold text-[var(--color-accent-dark)]">${task.percentage}%</span>
+                                            <span class="text-xl font-bold text-[var(--color-status-concluido-dark)]">${task.percentage}%</span>
                                         </div>
                                     </div>
                                     <span class="mt-2 text-sm font-medium text-stone-700 text-center truncate w-full" title="${task.nome}">${task.nome}</span>
@@ -1417,8 +1791,9 @@
             const rootStyle = getComputedStyle(document.documentElement);
             Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
             Chart.defaults.font.size = 12;
+            Chart.defaults.color = rootStyle.getPropertyValue('--color-text-primary') || '#1f2937';
 
-            const ctxPie = document.getElementById('statusPieChart')?.getContext('2d');
+            const ctxPie = targetElement.querySelector('#statusPieChart')?.getContext('2d'); 
             if (state.dashboardChart) state.dashboardChart.destroy(); 
             
             if (ctxPie) {
@@ -1457,7 +1832,7 @@
                 });
             }
 
-            const ctxDoughnut = document.getElementById('pautaDoughnutChart')?.getContext('2d');
+            const ctxDoughnut = targetElement.querySelector('#pautaDoughnutChart')?.getContext('2d'); 
             if (state.dashboardDoughnutChart) state.dashboardDoughnutChart.destroy(); 
             
             if (ctxDoughnut) {
@@ -1468,10 +1843,10 @@
                         datasets: [{
                             data: [percentagemConcluidas, percentagemRestante],
                             backgroundColor: [
-                                'var(--color-accent)', 
+                                'var(--color-status-concluido)', 
                                 '#e5e7eb'  
                             ],
-                            borderColor: '#E5E7EB', // Cinza claro
+                            borderColor: '#E5E7EB', 
                             borderWidth: 2,
                             hoverBorderWidth: 4
                         }]
@@ -1495,6 +1870,152 @@
                     }
                 });
             }
+        }
+
+        // --- NOVA FUNÇÃO (Dashboard Simplificado para Visual Equipe) ---
+        function renderDashboard_Slim(targetElement) {
+            if (!targetElement) return;
+
+            const atividades = getFilteredAtividades(); 
+            const totalAtividades = atividades.length;
+
+            // --- Calcular Status (Necessário para Pauta Geral) ---
+            let totalConcluidas = 0;
+            atividades.forEach(at => {
+                if (at.status === 'Concluído') {
+                    totalConcluidas++;
+                }
+            });
+            
+            // --- Gráfico "Pauta Geral" ---
+            const percentagemConcluidas = totalAtividades > 0 ? (totalConcluidas / totalAtividades) * 100 : 0;
+            const percentagemRestante = 100 - percentagemConcluidas;
+
+            // --- Gráfico "Progresso por Tarefa" ---
+            const tarefaProgress = [];
+            state.tarefasPadrao.forEach(tarefa => {
+                const taskName = tarefa.nome;
+                let totalParaTarefa = 0;
+                let concluidasParaTarefa = 0;
+
+                atividades.forEach(at => {
+                    if (at.titulo === taskName) {
+                        totalParaTarefa++;
+                        if (at.status === 'Concluído') {
+                            concluidasParaTarefa++;
+                        }
+                    }
+                });
+
+                const percentage = (totalParaTarefa === 0) ? 0 : Math.round((concluidasParaTarefa / totalParaTarefa) * 100);
+                
+                tarefaProgress.push({
+                    nome: taskName,
+                    percentage: percentage,
+                    total: totalParaTarefa,
+                    concluidas: concluidasParaTarefa
+                });
+            });
+
+            // --- Renderizar HTML (Versão Slim) ---
+            targetElement.innerHTML = ` 
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                    <!-- Coluna 1: Pauta Geral -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm space-y-6">
+                        <h3 class="text-lg font-medium text-stone-600 mb-2">Pauta Geral (Concluídas)</h3>
+                        <div class="relative max-w-[200px] mx-auto">
+                            <canvas id="pautaDoughnutChart_slim"></canvas> <!-- ID Único -->
+                            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <span class="text-3xl font-bold text-[var(--color-status-concluido-dark)]">${Math.round(percentagemConcluidas)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Coluna 2: Progresso por Tarefa Padrão -->
+                    <div class="bg-[var(--color-card)] p-6 rounded-lg shadow-sm">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">Progresso por Tarefa Padrão</h2>
+                        <p class="mb-4 text-stone-600">Percentagem de atividades concluídas para cada tarefa (com filtros).</p>
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 overflow-y-auto max-h-[500px] pr-2">
+                            ${tarefaProgress.length > 0 ? tarefaProgress.map(task => {
+                                const gradient = `conic-gradient(var(--color-status-concluido) ${task.percentage}%, #e5e7eb ${task.percentage}% 100%)`;
+                                
+                                return `
+                                <div class="flex flex-col items-center">
+                                    <div class="relative w-24 h-24 rounded-full flex items-center justify-center" style="background: ${gradient};">
+                                        <div class="w-20 h-20 bg-[var(--color-card)] rounded-full flex items-center justify-center shadow-inner">
+                                            <span class="text-xl font-bold text-[var(--color-status-concluido-dark)]">${task.percentage}%</span>
+                                        </div>
+                                    </div>
+                                    <span class="mt-2 text-sm font-medium text-stone-700 text-center truncate w-full" title="${task.nome}">${task.nome}</span>
+                                    <span class="text-xs text-stone-500">${task.concluidas} / ${task.total} ativ.</span>
+                                </div>
+                                `;
+                            }).join('') : '<p class="text-stone-500 col-span-full text-center">Nenhuma tarefa padrão encontrada com atividades nos filtros atuais.</p>'}
+                        </div>
+                    </div>
+                </div>`;
+
+            // --- Lógica Chart.js (Versão Slim) ---
+            const rootStyle = getComputedStyle(document.documentElement);
+            Chart.defaults.font.family = rootStyle.getPropertyValue('--font-family') || "'Inter', sans-serif";
+            Chart.defaults.font.size = 12;
+            Chart.defaults.color = rootStyle.getPropertyValue('--color-text-primary') || '#1f2937';
+
+            // Gráfico Pauta Geral
+            const ctxDoughnut = targetElement.querySelector('#pautaDoughnutChart_slim')?.getContext('2d');
+            
+            // Destrói gráfico anterior se existir (para evitar leaks de memória)
+            const existingChart = Chart.getChart(ctxDoughnut);
+            if (existingChart) {
+                existingChart.destroy();
+            }
+
+            if (ctxDoughnut) {
+                new Chart(ctxDoughnut, { // Cria um novo gráfico
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Concluído', 'Restante'],
+                        datasets: [{
+                            data: [percentagemConcluidas, percentagemRestante],
+                            backgroundColor: [
+                                'var(--color-status-concluido)',
+                                '#e5e7eb'
+                            ],
+                            borderColor: '#E5E7EB',
+                            borderWidth: 2,
+                            hoverBorderWidth: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        cutout: '75%', 
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { 
+                                enabled: true,
+                                callbacks: {
+                                    label: (context) => {
+                                        const label = context.label || '';
+                                        const value = context.raw;
+                                        return ` ${label}: ${value.toFixed(1)}%`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        // --- FIM DA NOVA FUNÇÃO ---
+
+        function renderVisualEquipe() {
+            if (!dom.visualDashboardWrapper || !dom.visualListaWrapper) return;
+            console.log("Renderizando Visual Equipe...");
+            // Renderiza a lista na sua metade (AGORA EM CIMA)
+            renderLista(dom.visualListaWrapper);
+            // Renderiza o dashboard slim na sua metade (AGORA EM BAIXO)
+            renderDashboard_Slim(dom.visualDashboardWrapper);
         }
 
         function renderAdminFuncionarios() {
@@ -1613,11 +2134,11 @@
             html += `</tbody></table></div>`;
             dom.adminContent.innerHTML = html;
         }
-
+        
         function renderAdminTarefas() {
             let html = `<div class="flex justify-end mb-4">
                 <button data-action="add" class="btn-primary">
-                    Adicionar Tarefa Padrão
+                    Adicionar Tarefa
                 </button>
             </div>`;
             
@@ -1626,19 +2147,25 @@
                     <thead class="bg-[var(--color-bg-alt)]">
                         <tr>
                             <th class="table-header">Nome da Tarefa</th>
+                            <th class="table-header">Cargos Associados</th>
                             <th class="table-header text-right">Ações</th>
                         </tr>
                     </thead>
                     <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
 
             if (state.tarefasPadrao.length === 0) {
-                html += `<tr><td colspan="2" class="px-6 py-4 text-center text-stone-500">Nenhuma tarefa padrão cadastrada.</td></tr>`;
+                html += `<tr><td colspan="3" class="px-6 py-4 text-center text-stone-500">Nenhuma tarefa cadastrada.</td></tr>`;
             }
-            
+
             state.tarefasPadrao.forEach(tarefa => {
+                const cargosNomes = (tarefa.cargoIds || [])
+                    .map(id => state.cargos.find(c => c.id === id)?.nome || 'N/A')
+                    .join(', ');
+                
                 html += `
                     <tr>
                         <td class="table-cell font-medium text-stone-900">${tarefa.nome}</td>
+                        <td class="table-cell">${cargosNomes || 'Nenhum'}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <button data-action="edit" data-id="${tarefa.id}" class="btn-link">Editar</button>
                             <button data-action="delete" data-id="${tarefa.id}" class="btn-link-danger">Excluir</button>
@@ -1650,7 +2177,6 @@
             dom.adminContent.innerHTML = html;
         }
         
-        // --- Nova Função: Renderizar Painel de Usuários ---
         function renderAdminUsuarios() {
             let html = `<div class="overflow-x-auto bg-[var(--color-card)] rounded-lg shadow-sm">
                 <table class="min-w-full divide-y divide-stone-200">
@@ -1659,12 +2185,13 @@
                             <th class="table-header">Nome</th>
                             <th class="table-header">Email</th>
                             <th class="table-header">Função (Role)</th>
+                            <th class="table-header text-right">Ações</th> 
                         </tr>
                     </thead>
                     <tbody class="bg-[var(--color-card)] divide-y divide-stone-200">`;
-
+            
             if (state.usuarios.length === 0) {
-                html += `<tr><td colspan="3" class="px-6 py-4 text-center text-stone-500">Nenhum usuário encontrado.</td></tr>`;
+                 html += `<tr><td colspan="4" class="px-6 py-4 text-center text-stone-500">Nenhum usuário encontrado.</td></tr>`;
             }
 
             state.usuarios.forEach(user => {
@@ -1672,14 +2199,20 @@
                 html += `
                     <tr>
                         <td class="table-cell font-medium text-stone-900">${user.nome}</td>
-                        <td class="table-cell">${user.email || 'N/A'}</td>
+                        <td class="table-cell">${user.email || '(Anônimo/Preview)'}</td>
                         <td class="table-cell">
                             <select data-action="change-role" data-uid="${user.uid}" class="form-select text-sm" ${isCurrentUser ? 'disabled' : ''}>
                                 <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
                                 <option value="editor" ${user.role === 'editor' ? 'selected' : ''}>Editor</option>
                                 <option value="leitor" ${user.role === 'leitor' ? 'selected' : ''}>Leitor</option>
                             </select>
-                            ${isCurrentUser ? '<span class="text-xs text-stone-500 ml-2">(Você)</span>' : ''}
+                        </td>
+                        <td class="table-cell text-right">
+                             <button data-action="delete" data-id="${user.uid}" class="btn-link-danger" 
+                                ${isCurrentUser ? 'disabled' : ''} 
+                                title="${isCurrentUser ? 'Não pode excluir a si mesmo' : 'Excluir usuário'}">
+                                Excluir
+                            </button>
                         </td>
                     </tr>`;
             });
@@ -1687,20 +2220,139 @@
             html += `</tbody></table></div>`;
             dom.adminContent.innerHTML = html;
         }
+        
+        function renderAdminPersonalizacao() {
+            const s = state.siteSettings || {};
+            
+            let html = `
+                <div class="bg-[var(--color-card)] rounded-lg shadow-sm p-6">
+                    <h2 class="text-xl font-semibold text-stone-700 mb-6">Personalização Global do Site</h2>
+                    <form id="settings-form" class="space-y-8">
+                    
+                        <!-- Seção de Cores Globais -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Cores Globais</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label for="colorBg" class="block text-sm font-medium text-stone-700">Fundo da Página</label>
+                                    <input type="color" id="colorBg" name="colorBg" value="${s.colorBg || '#F4F7FA'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorCard" class="block text-sm font-medium text-stone-700">Fundo dos Cards</label>
+                                    <input type="color" id="colorCard" name="colorCard" value="${s.colorCard || '#FFFFFF'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorText" class="block text-sm font-medium text-stone-700">Texto Principal</label>
+                                    <input type="color" id="colorText" name="colorText" value="${s.colorText || '#1f2937'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorSidebar" class="block text-sm font-medium text-stone-700">Menu Lateral</label>
+                                    <input type="color" id="colorSidebar" name="colorSidebar" value="${s.colorSidebar || '#648AAE'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorAccent" class="block text-sm font-medium text-stone-700">Cor Destaque (Accent)</label>
+                                    <input type="color" id="colorAccent" name="colorAccent" value="${s.colorAccent || '#648AAE'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Seção de Cores de Status -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Cores dos Gráficos (Status)</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label for="colorStatusConcluido" class="block text-sm font-medium text-stone-700">Concluído</label>
+                                    <input type="color" id="colorStatusConcluido" name="colorStatusConcluido" value="${s.colorStatusConcluido || '#648AAE'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorStatusPendente" class="block text-sm font-medium text-stone-700">Pendente</label>
+                                    <input type="color" id="colorStatusPendente" name="colorStatusPendente" value="${s.colorStatusPendente || '#F97422'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorStatusEmAndamento" class="block text-sm font-medium text-stone-700">Em Andamento</label>
+                                    <input type="color" id="colorStatusEmAndamento" name="colorStatusEmAndamento" value="${s.colorStatusEmAndamento || '#10B981'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                                <div>
+                                    <label for="colorStatusBloqueado" class="block text-sm font-medium text-stone-700">Bloqueado</label>
+                                    <input type="color" id="colorStatusBloqueado" name="colorStatusBloqueado" value="${s.colorStatusBloqueado || '#EF4444'}" class="w-full h-10 p-1 border border-stone-300 rounded-md">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Layout do Dashboard -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Layout do Dashboard</h3>
+                            <div>
+                                <label for="dashboardLayout" class="block text-sm font-medium text-stone-700">Modo de Visualização</slabel>
+                                <select id="dashboardLayout" name="dashboardLayout" class="form-select mt-1">
+                                    <option value="lg:grid-cols-3" ${s.dashboardLayout === 'lg:grid-cols-3' ? 'selected' : ''}>3 Colunas (Padrão)</option>
+                                    <option value="lg:grid-cols-2" ${s.dashboardLayout === 'lg:grid-cols-2' ? 'selected' : ''}>2 Colunas</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Upload de Logo -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Logo da Empresa (Rodapé)</h3>
+                            <div>
+                                <label for="logoFile" class="block text-sm font-medium text-stone-700">Ficheiro da Logo</Elabel>
+                                <input type="file" id="logoFile" name="logoFile" class="mt-1 block w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[var(--color-accent-light)] file:text-[var(--color-accent-dark)] hover:file:bg-[var(--color-accent-light-hover)] file:cursor-pointer" accept="image/png, image/jpeg, image/svg+xml">
+                                ${s.logoUrl ? `<img src="${s.logoUrl}" alt="Logo Atual" class="h-12 mt-4 bg-stone-100 p-2 rounded-md">` : '<p class="text-sm text-stone-500 mt-2">Nenhuma logo definida.</p>'}
+                            </div>
+                        </div>
+
+                        <!-- Seção de Textos -->
+                        <div>
+                            <h3 class="text-lg font-medium text-stone-800 border-b pb-2 mb-4">Textos do Menu</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label for="sidebarTitle" class="block text-sm font-medium text-stone-700">Título Principal (HTML permitido)</label>
+                                    <input type="text" id="sidebarTitle" name="sidebarTitle" value="${s.sidebarTitle || '<span class=&quot;font-normal&quot;>Gestão de</span> Pautas'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuPautas_text" class="block text-sm font-medium text-stone-700">Botão Pautas</label>
+                                    <input type="text" id="menuPautas_text" name="menuPautas_text" value="${s.menuPautas_text || 'Pautas'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuLancar_text" class="block text-sm font-medium text-stone-700">Botão Lançar</label>
+                                    <input type="text" id="menuLancar_text" name="menuLancar_text" value="${s.menuLancar_text || 'Lançar Atividade'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuDashboard_text" class="block text-sm font-medium text-stone-700">Botão Dashboard</label>
+                                    <input type="text" id="menuDashboard_text" name="menuDashboard_text" value="${s.menuDashboard_text || 'Dashboard'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuVisualEquipe_text" class="block text-sm font-medium text-stone-700">Botão Visual Equipe</label>
+                                    <input type="text" id="menuVisualEquipe_text" name="menuVisualEquipe_text" value="${s.menuVisualEquipe_text || 'Visual Equipe'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuAdmin_text" class="block text-sm font-medium text-stone-700">Botão Admin</label>
+                                    <input type="text" id="menuAdmin_text" name="menuAdmin_text" value="${s.menuAdmin_text || 'Administrativo'}" class="form-input">
+                                </div>
+                                <div>
+                                    <label for="menuTema_text" class="block text-sm font-medium text-stone-700">Botão Tema</label>
+                                    <input type="text" id="menuTema_text" name="menuTema_text" value="${s.menuTema_text || 'Tema'}" class="form-input">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Botão Salvar -->
+                        <div class="pt-6 border-t">
+                            <button type="button" data-action="save-settings" class="btn-primary w-full md:w-auto">Salvar Alterações</button>
+                        </div>
+                    </form>
+                </div>`;
+            dom.adminContent.innerHTML = html;
+        }
 
         // --- Modals ---
         function openModal(type, id = null) {
-            // Apenas editores ou admins podem abrir o modal para adicionar/editar
+            // Permissão
             if (state.userRole === 'leitor') {
-                showToast("Apenas 'leitores' não podem alterar dados.", 'error');
+                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
                 return;
             }
-            // Apenas admin pode mexer em dados de admin (funcionários, cargos, etc.)
-            if (type !== 'atividade' && state.userRole !== 'admin') {
-                showToast("Apenas 'admins' podem alterar dados administrativos.", 'error');
-                return;
-            }
-
+            
             state.editingId = id;
             state.editingCollection = type;
             dom.modalLoading.classList.remove('hidden');
@@ -1716,33 +2368,31 @@
                 const clienteOptions = state.clientes.map(c => `<option value="${c.id}" ${at?.clienteId === c.id ? 'selected' : ''}>${c.nome}</option>`).join('');
                 const statusOptions = ['Pendente', 'Em Andamento', 'Concluído', 'Bloqueado']
                     .map(s => `<option value="${s}" ${at?.status === s ? 'selected' : ''}>${s}</option>`).join('');
-                const tarefaOptions = state.tarefasPadrao.map(t => `<option value="${t.nome}">${t.nome}</option>`).join('');
-
+                
+                let tarefaOptions = '<option value="">Selecione um funcionário primeiro...</option>';
+                if (id && at?.funcionarioId) {
+                    const func = state.funcionarios.find(f => f.id === at.funcionarioId);
+                    if (func && func.cargoId) {
+                        tarefaOptions = state.tarefasPadrao
+                            .filter(t => t.cargoIds && t.cargoIds.includes(func.cargoId))
+                            .map(t => `<option value="${t.nome}" ${at?.titulo === t.nome ? 'selected' : ''}>${t.nome}</option>`)
+                            .join('');
+                        tarefaOptions = '<option value="">Selecione uma tarefa...</option>' + tarefaOptions;
+                    } else {
+                         tarefaOptions = '<option value="">Funcionário sem cargo...</option>';
+                    }
+                }
 
                 html = `
                     <form id="modal-form" class="space-y-4">
-                        <div>
-                            <label for="tarefaPadrao" class="block text-sm font-medium text-stone-700">Tarefa Padrão (Opcional)</label>
-                            <select id="tarefaPadrao" name="tarefaPadrao" class="form-select">
-                                <option value="">Selecione uma tarefa...</option>
-                                ${tarefaOptions}
-                            </select>
-                        </div>
-                        <div>
-                            <label for="titulo" class="block text-sm font-medium text-stone-700">Título da Atividade</label>
-                            <input type="text" id="titulo" name="titulo" value="${at.titulo || ''}" class="form-input" required>
-                        </div>
+                        
+                        <!-- 1. Data -->
                         <div>
                             <label for="data" class="block text-sm font-medium text-stone-700">Data</label>
                             <input type="date" id="data" name="data" value="${at.data || new Date().toISOString().split('T')[0]}" class="form-input" required>
                         </div>
-                        <div>
-                            <label for="clienteId" class="block text-sm font-medium text-stone-700">Cliente</label>
-                            <select id="clienteId" name="clienteId" class="form-select">
-                                <option value="">Selecione...</option>
-                                ${clienteOptions}
-                            </select>
-                        </div>
+                        
+                        <!-- 2. Funcionário -->
                         <div>
                             <label for="funcionarioId" class="block text-sm font-medium text-stone-700">Funcionário</label>
                             <select id="funcionarioId" name="funcionarioId" class="form-select" required>
@@ -1750,12 +2400,45 @@
                                 ${funcOptions}
                             </select>
                         </div>
+                        
+                        <!-- 3. Cargo -->
+                        <div>
+                            <label for="cargo" class="block text-sm font-medium text-stone-700">Cargo (Automático)</label>
+                            <input type="text" id="cargo" name="cargo" class="form-input bg-stone-100 border-stone-200" disabled placeholder="Selecione um funcionário...">
+                        </div>
+
+                        <!-- 4. Cliente -->
+                        <div>
+                            <label for="clienteId" class="block text-sm font-medium text-stone-700">Cliente</label>
+                            <select id="clienteId" name="clienteId" class="form-select">
+                                <option value="">Selecione...</option>
+                                ${clienteOptions}
+                            </select>
+                        </div>
+
+                        <!-- 5. Tarefa -->
+                        <div>
+                            <label for="tarefaPadrao" class="block text-sm font-medium text-stone-700">Tarefa Padrão (Filtrada por cargo)</label>
+                            <select id="tarefaPadrao" name="tarefaPadrao" class="form-select" ${!id ? 'disabled' : ''}>
+                                ${tarefaOptions}
+                            </select>
+                        </div>
+
+                        <!-- 6. Título -->
+                        <div>
+                            <label for="titulo" class="block text-sm font-medium text-stone-700">Título da Atividade</label>
+                            <input type="text" id="titulo" name="titulo" value="${at.titulo || ''}" class="form-input" required>
+                        </div>
+                        
+                        <!-- 7. Status -->
                         <div>
                             <label for="status" class="block text-sm font-medium text-stone-700">Status</label>
                             <select id="status" name="status" class="form-select">
                                 ${statusOptions}
                             </select>
                         </div>
+                        
+                        <!-- 8. Observações -->
                         <div>
                             <label for="observacoes" class="block text-sm font-medium text-stone-700">Descrição / Observações</label>
                             <textarea id="observacoes" name="observacoes" rows="3" class="form-input">${at.observacoes || ''}</textarea>
@@ -1820,11 +2503,23 @@
             else if (type === 'tarefas') {
                 title = id ? 'Editar Tarefa Padrão' : 'Adicionar Tarefa Padrão';
                 const tarefa = id ? state.tarefasPadrao.find(t => t.id === id) : {};
+                // Opções de Cargos para o multi-select
+                const cargoOptions = state.cargos.map(c => 
+                    `<option value="${c.id}" ${tarefa.cargoIds?.includes(c.id) ? 'selected' : ''}>${c.nome}</option>`
+                ).join('');
+
                 html = `
                     <form id="modal-form" class="space-y-4">
                         <div>
                             <label for="nome" class="block text-sm font-medium text-stone-700">Nome da Tarefa</label>
                             <input type="text" id="nome" name="nome" value="${tarefa.nome || ''}" class="form-input" required>
+                        </div>
+                        <!-- Seleção de Cargos Associados -->
+                        <div>
+                            <label for="cargoIds" class="block text-sm font-medium text-stone-700">Cargos Associados (Segure Ctrl/Cmd para selecionar vários)</label>
+                            <select id="cargoIds" name="cargoIds" multiple class="form-select h-32">
+                                ${cargoOptions}
+                            </select>
                         </div>
                     </form>`;
             }
@@ -1834,6 +2529,7 @@
             dom.modalLoading.classList.add('hidden');
             dom.modal.classList.remove('hidden');
 
+            // Adicionar listener para o select de tarefas padrão
             if (type === 'atividade') {
                 const selectTarefa = document.getElementById('tarefaPadrao');
                 const inputTitulo = document.getElementById('titulo');
@@ -1843,6 +2539,63 @@
                             inputTitulo.value = e.target.value;
                         }
                     });
+                }
+                
+                // Lógica para puxar cargo E filtrar tarefas
+                const selectFuncionario = document.getElementById('funcionarioId');
+                const inputCargo = document.getElementById('cargo');
+                
+                const updateCargoField = (funcionarioId) => {
+                    let foundCargoId = null;
+                    if (funcionarioId) {
+                        const func = state.funcionarios.find(f => f.id === funcionarioId);
+                        if (func && func.cargoId) {
+                            foundCargoId = func.cargoId; // Guarda o ID do cargo
+                            const cargo = state.cargos.find(c => c.id === func.cargoId);
+                            if (cargo) {
+                                inputCargo.value = cargo.nome;
+                            } else {
+                                inputCargo.value = 'Cargo não encontrado';
+                            }
+                        } else {
+                            inputCargo.value = 'Funcionário sem cargo';
+                        }
+                    } else {
+                        inputCargo.value = 'Selecione um funcionário...';
+                    }
+                    
+                    if (selectTarefa) {
+                        if (foundCargoId) {
+                            const filteredTarefas = state.tarefasPadrao.filter(t => 
+                                t.cargoIds && t.cargoIds.includes(foundCargoId)
+                            );
+                            let options = '<option value="">Selecione uma tarefa...</option>';
+                            options += filteredTarefas.map(t => 
+                                `<option value="${t.nome}">${t.nome}</option>`
+                            ).join('');
+                            selectTarefa.innerHTML = options;
+                            selectTarefa.disabled = false;
+                        } else {
+                            selectTarefa.innerHTML = '<option value="">Selecione um funcionário primeiro...</option>';
+                            selectTarefa.disabled = true;
+                        }
+                    }
+                };
+                
+                if (selectFuncionario && inputCargo) {
+                    selectFuncionario.addEventListener('change', (e) => {
+                        updateCargoField(e.target.value);
+                        const inputTitulo = document.getElementById('titulo');
+                        if(inputTitulo) inputTitulo.value = '';
+                    });
+                }
+                
+                if (id) {
+                    const at = state.atividades.find(a => a.id === id);
+                    if (at && at.funcionarioId) {
+                         updateCargoField(at.funcionarioId);
+                         if (selectTarefa) selectTarefa.value = at.titulo || "";
+                    }
                 }
             }
         }
@@ -1855,6 +2608,7 @@
 
         async function handleModalSave() {
             const form = document.getElementById('modal-form');
+            if (!form) return;
             if (!form.reportValidity()) return;
 
             dom.btnModalSave.disabled = true;
@@ -1863,13 +2617,20 @@
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
             
+            // Handle multi-select para cargoIds
+            if (state.editingCollection === 'tarefas') {
+                const select = form.querySelector('#cargoIds');
+                data.cargoIds = Array.from(select.selectedOptions).map(option => option.value);
+            }
+
             let collection;
             let fileToUpload = null;
-            let existingFotoUrl = data.fotoUrl || ""; 
+            let existingFotoUrl = "";
 
             if (state.editingCollection === 'atividade') collection = atividadesCollection;
             if (state.editingCollection === 'funcionarios') {
                 collection = funcionariosCollection;
+                existingFotoUrl = data.fotoUrl || "";
                 const fotoFileInput = document.getElementById('fotoFile');
                 if (fotoFileInput && fotoFileInput.files.length > 0) {
                     fileToUpload = fotoFileInput.files[0];
@@ -1888,7 +2649,7 @@
             }
 
             try {
-                if (fileToUpload) {
+                if (fileToUpload) { 
                     dom.btnModalSave.innerHTML = 'Enviando foto...';
                     const storageRef = ref(storage, `funcionarios_fotos/${userId}_${Date.now()}_${fileToUpload.name}`);
                     const snapshot = await uploadBytes(storageRef, fileToUpload);
@@ -1896,6 +2657,10 @@
                     data.fotoUrl = downloadURL; 
                 } else {
                     data.fotoUrl = existingFotoUrl; 
+                }
+                
+                if (state.editingCollection !== 'funcionarios') {
+                    delete data.fotoUrl;
                 }
 
                 if (state.editingId) {
@@ -1917,6 +2682,12 @@
         }
         
         function openDeleteModal(id, collection) {
+            // Permissão
+             if (state.userRole === 'leitor') {
+                showToast("Apenas 'editores' e 'admins' podem alterar dados.", 'error');
+                return;
+            }
+            
             state.editingId = id;
             state.editingCollection = collection;
             dom.confirmDeleteModal.classList.remove('hidden');
@@ -1931,13 +2702,26 @@
             if (state.editingCollection === 'cargos') collectionPath = cargosPath;
             if (state.editingCollection === 'clientes') collectionPath = clientesPath;
             if (state.editingCollection === 'tarefas') collectionPath = tarefasPadraoPath;
+            if (state.editingCollection === 'usuarios') collectionPath = usuariosPath; 
 
             if (!collectionPath) {
-                showToast('Erro: Tipo de coleção desconhecido.', 'error');
+                showToast('Erro: Coleção desconhecida.', 'error');
                 return;
             }
 
             try {
+                if (state.editingCollection === 'usuarios') {
+                    if (state.editingId === state.currentUser.uid) {
+                        showToast("Erro: Não pode excluir a si mesmo.", 'error');
+                        state.editingId = null;
+                        state.editingCollection = null;
+                        dom.confirmDeleteModal.classList.add('hidden');
+                        return;
+                    }
+                    // NOTA: Isto apenas remove o usuário da base de dados (remove a função),
+                    // não remove o usuário do Firebase Auth.
+                }
+
                 const docRef = doc(db, collectionPath, state.editingId);
                 await deleteDoc(docRef);
                 showToast('Item excluído com sucesso.', 'success');
@@ -1964,50 +2748,33 @@
                 dom.toast.classList.add('hidden');
             }, 3000);
         }
-
-        // --- Função para Adicionar Dados Iniciais (Mock) ---
+        
         async function seedInitialData() {
-            // Esta função agora só verifica, não cria
-            const cargoQuery = query(cargosCollection, limit(1));
-            const cargoSnapshot = await getDocs(cargoQuery);
+            // Esta função agora apenas verifica se as coleções públicas
+            // (cargos, tarefas) existem, pois os usuários são dinâmicos.
             
-            if (!cargoSnapshot.empty) {
-                console.log("Dados já existem. Não é necessário semear.");
-                return; // Se já tem dados, não faz nada
-            }
-
             try {
-                // Apenas 'admin' pode semear dados
-                if (state.userRole !== 'admin') {
-                    console.log("Apenas admins podem semear dados iniciais.");
-                    return;
+                // 1. Verificar/Adicionar CARGOS (apenas se vazia)
+                const cargoQuery = query(cargosCollection, limit(1));
+                const cargoSnapshot = await getDocs(cargoQuery);
+                
+                if (cargoSnapshot.empty) {
+                    console.log("Adicionando dados iniciais (Cargos)...");
+                    await addDoc(cargosCollection, { nome: "Designer" });
+                    await addDoc(cargosCollection, { nome: "Edição" });
                 }
-                
-                console.log("Adicionando dados iniciais (Cargos, Tarefas, Funcionários)...");
-                // 1. Adicionar CARGOS
-                const docRefDesigner = await addDoc(cargosCollection, { nome: "Designer" });
-                const docRefEdicao = await addDoc(cargosCollection, { nome: "Edição" });
-                
-                // 2. Adicionar TAREFAS PADRÃO
-                await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
-                await addDoc(tarefasPadraoCollection, { nome: "Design" }); 
-                
-                // 3. Adicionar FUNCIONÁRIOS
-                await addDoc(funcionariosCollection, {
-                    nome: "Sabrina",
-                    email: "sabrina@email.com",
-                    cargoId: docRefDesigner.id,
-                    fotoUrl: "https://placehold.co/100x100/FFF0E7/C75D1B?text=S" // Tema Laranja
-                });
-                await addDoc(funcionariosCollection, {
-                    nome: "Maikon",
-                    email: "maikon@email.com",
-                    cargoId: docRefEdicao.id,
-                    fotoUrl: "https://placehold.co/100x100/E0E8F0/4A698E?text=M" // Tema Azul Sereno
-                });
-                console.log("Dados iniciais adicionados.");
+
+                // 2. Verificar/Adicionar TAREFAS PADRÃO (apenas se vazia)
+                const tarefaQuery = query(tarefasPadraoCollection, limit(1));
+                const tarefaSnapshot = await getDocs(tarefaQuery);
+                if (tarefaSnapshot.empty) {
+                    console.log("Adicionando dados iniciais (Tarefas)...");
+                    await addDoc(tarefasPadraoCollection, { nome: "Planejamento" });
+                    await addDoc(tarefasPadraoCollection, { nome: "Design" }); 
+                }
             } catch (error) {
-                console.error("Erro ao adicionar dados iniciais:", error);
+                // Não mostra toast para não incomodar, apenas loga
+                console.error("Erro ao verificar/adicionar dados iniciais:", error);
             }
         }
 
@@ -2034,36 +2801,46 @@
             --color-accent-light-hover: #D0DDE8;
             --color-accent-text: #FFFFFF;
             
-            /* Fontes */
-            --font-family: 'Inter', sans-serif;
+            /* Cores de Status Padrão */
+            --color-status-concluido: var(--color-accent);
+            --color-status-concluido-light: var(--color-accent-light);
+            --color-status-concluido-dark: var(--color-accent-dark);
+            --color-status-pendente: #F97422;
+            --color-status-pendente-light: #FFF0E7;
+            --color-status-pendente-dark: #C75D1B;
+            --color-status-em-andamento: #10B981;
+            --color-status-em-andamento-light: #DEF7EC;
+            --color-status-em-andamento-dark: #057A55;
+            --color-status-bloqueado: #EF4444;
+            --color-status-bloqueado-light: #FEE2E2;
+            --color-status-bloqueado-dark: #B91C1C;
         }
         
+        /* Temas Rápidos */
         .theme-solar {
             --color-accent: #FFC82E;
+            --color-accent-dark: #E6B429;
+            --color-accent-darker: #CC9F24;
+            --color-accent-light: #FFF8E5;
+            --color-accent-light-hover: #FFF1CD;
             --color-accent-text: #1f2937;
         }
         
         .theme-laranja {
             --color-accent: #F97422;
+            --color-accent-dark: #E0691E;
+            --color-accent-darker: #C75D1B;
+            --color-accent-light: #FFF0E7;
+            --color-accent-light-hover: #FFE8D9;
             --color-accent-text: #FFFFFF;
         }
-        
-        .theme-custom {
-            /* As variáveis --color-accent, etc., são definidas via JS */
-        }
 
-        body {
-            font-family: var(--font-family);
-        }
-
-        /* Classes de Botões Reutilizáveis */
-        .btn { @apply px-4 py-2 rounded-md text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2; }
-        .btn-primary { @apply btn bg-[var(--color-accent)] text-[var(--color-accent-text)] hover:bg-[var(--color-accent-dark)] focus:ring-[var(--color-accent)]; }
-        .btn-secondary { @apply btn bg-[var(--color-bg-alt)] text-[var(--color-text-secondary)] hover:bg-stone-200 focus:ring-[var(--color-accent)]; }
-        .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500; }
-        .btn-icon { @apply p-2 rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-alt)] hover:text-[var(--color-text-primary)] transition-colors; }
+        /* Classes de Estilo Reutilizáveis */
+        .btn-primary { @apply inline-flex items-center justify-center px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-text)] rounded-md shadow-sm font-medium hover:bg-[var(--color-accent-dark)] transition-colors disabled:opacity-50; }
+        .btn-secondary { @apply inline-flex items-center justify-center px-4 py-2 bg-[var(--color-card)] text-[var(--color-text-secondary)] rounded-md shadow-sm font-medium border border-stone-300 hover:bg-[var(--color-bg-alt)] transition-colors disabled:opacity-50; }
+        .btn-icon { @apply inline-flex items-center justify-center p-2 bg-white text-stone-500 rounded-md hover:bg-stone-100 transition-colors; }
         .btn-link { @apply text-[var(--color-accent-dark)] hover:text-[var(--color-accent-darker)] font-medium transition-colors; }
-        .btn-link-danger { @apply text-red-600 hover:text-red-800 font-medium transition-colors; }
+        .btn-link-danger { @apply text-red-600 hover:text-red-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
 
         /* Estilo Botões Menu Lateral */
         .menu-btn { @apply flex items-center justify-start w-full px-3 py-3 rounded-md text-base font-medium text-[var(--color-sidebar-text)] hover:text-[var(--color-sidebar-text-hover)] hover:bg-[var(--color-sidebar-bg-hover)] transition-colors duration-150; }
@@ -2071,13 +2848,13 @@
 
         /* Estilo Botões Sub-Navegação (Pautas, Admin) */
         .sub-nav-btn { @apply px-4 py-2 text-sm font-medium rounded-md transition-colors duration-150 shadow-sm; } 
-        .sub-nav-btn-active { @apply bg-[var(--color-accent)] text-[var(--color-accent-text)] font-semibold shadow-sm; } /* Fundo na cor do tema */
+        .sub-nav-btn-active { @apply bg-[var(--color-accent)] text-[var(--color-accent-text)] font-semibold shadow-sm; } 
         .sub-nav-btn-inactive { @apply bg-white text-[var(--color-text-secondary)] border border-stone-200 hover:bg-stone-50; } 
         
         .theme-swatch { @apply w-6 h-6 rounded-full border border-gray-300 cursor-pointer transition-all; }
         
         .table-header { @apply px-6 py-3 text-left text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wider; }
-        .table-cell { @apply px-6 py-4 whitespace-nowrap text-sm text-stone-700; }
+        .table-cell { @apply px-6 py-4 whitespace-nowrap text-sm text-[var(--color-text-primary)]; }
         
         .form-input { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
         .form-select { @apply mt-1 block w-full px-3 py-2 border border-stone-300 rounded-md shadow-sm focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors; }
@@ -2087,90 +2864,100 @@
             margin-right: 0;
         }
 
-        /* Força o alinhamento do texto à esquerda */
         .sidebar-text {
             @apply text-left;
         }
         
+        /* Classes de Status Dinâmicas */
+        .status-card-base { @apply p-1.5 rounded-md text-xs cursor-pointer transition-opacity; }
+        .status-card-base:hover { opacity: 0.8; }
+        .status-concluido { background-color: var(--color-status-concluido-light); color: var(--color-status-concluido-dark); }
+        .status-em-andamento { background-color: var(--color-status-em-andamento-light); color: var(--color-status-em-andamento-dark); }
+        .status-pendente { background-color: var(--color-status-pendente-light); color: var(--color-status-pendente-dark); }
+        .status-bloqueado { background-color: var(--color-status-bloqueado-light); color: var(--color-status-bloqueado-dark); }
+        .status-default { background-color: #e5e7eb; color: #4b5563; }
+        
+        .kpi-card {
+            @apply flex justify-between items-center p-3 bg-[var(--color-bg-alt)] rounded-md;
+        }
+        
     </style>
 </head>
-<body class="bg-[var(--color-bg)] antialiased" style="font-family: var(--font-family);">
+<body class="bg-[var(--color-bg)] antialiased" style="font-family: var(--font-family); color: var(--color-text-primary);">
 
-    <!-- Ecrã de Login (Novo) -->
-    <div id="login-view" class="min-h-screen flex items-center justify-center bg-[var(--color-bg)] p-4">
+    <!-- Ecrã de Login (Escondido por padrão se app-view estiver visível) -->
+    <div id="login-view" class="hidden min-h-screen flex items-center justify-center bg-[var(--color-bg)] p-4">
         <div class="max-w-md w-full bg-[var(--color-card)] p-8 rounded-lg shadow-xl">
-            <div class="text-center mb-8">
-                <h1 class="text-3xl font-bold text-[var(--color-accent-dark)]">
-                    <span class="font-normal">Gestão de</span> Pautas
-                </h1>
-                <p id="login-title" class="text-stone-600 mt-2">Aceder à Plataforma</p>
-            </div>
+            <h2 id="login-title" class="text-2xl font-bold text-center text-stone-800 mb-6">Aceder à Plataforma</h2>
             
-            <!-- Formulário de Login/Registo -->
             <form id="login-form" class="space-y-4">
-                <div id="login-name-wrapper" class="hidden"> <!-- Campo Nome (para registo) -->
-                    <label for="login-name" class="block text-sm font-medium text-stone-700">Nome</label>
-                    <input type="text" id="login-name" name="name" class="form-input">
+                <!-- Campo Nome (só para registo) -->
+                <div id="login-name-wrapper" class="hidden">
+                    <label for="login-name" class="block text-sm font-medium text-stone-700">Nome Completo</label>
+                    <input type="text" id="login-name" name="login-name" class="form-input">
                 </div>
                 <div>
                     <label for="login-email" class="block text-sm font-medium text-stone-700">Email</label>
-                    <input type="email" id="login-email" name="email" class="form-input" required>
+                    <input type="email" id="login-email" name="login-email" required class="form-input">
                 </div>
                 <div>
                     <label for="login-password" class="block text-sm font-medium text-stone-700">Senha</label>
-                    <input type="password" id="login-password" name="password" class="form-input" required>
+                    <input type="password" id="login-password" name="login-password" required class="form-input">
                 </div>
                 
-                <p id="login-message" class="text-sm text-red-600 text-center"></p>
+                <p id="login-message" class="text-sm text-red-600"></p>
                 
-                <button id="login-email-btn" type="submit" class="btn-primary w-full justify-center">Entrar com Email</button>
+                <button id="login-email-btn" type="submit" class="btn-primary w-full">Entrar com Email</button>
             </form>
-            
-            <!-- Divisor Removido -->
-            
+
             <div class="text-sm text-center mt-6">
                 <button id="toggle-to-create" class="btn-link">Não tem uma conta? Crie uma</button>
                 <button id="toggle-to-login" class="btn-link hidden">Já tem uma conta? Entre</button>
             </div>
         </div>
     </div>
-
+    
     <!-- Aplicação Principal (Escondida por padrão) -->
     <div id="app-view" class="hidden">
-        <!-- Menu Lateral (Mobile: escondido por padrão) -->
+        <!-- Menu Lateral -->
         <nav id="sidebar-menu" class="fixed inset-y-0 left-0 bg-[var(--color-sidebar)] shadow-md w-64 p-4 z-30 transform -translate-x-full md:translate-x-0 transition-all duration-300 ease-in-out flex flex-col">
             <!-- Logo / Título -->
-            <div id="sidebar-title" class="flex items-center justify-start px-3 py-4 mb-4"> <!-- Alinhado à esquerda e px-3 -->
-                <h1 class="text-2xl font-bold text-white"> 
+            <div id="sidebar-title" class="flex items-center justify-start px-3 py-4 mb-4"> 
+                <h1 id="sidebar-title-h1" class="text-2xl font-bold text-white"> 
                     <span class="font-normal">Gestão de</span> Pautas
                 </h1>
             </div>
-
+            
             <!-- Itens do Menu -->
             <div class="flex flex-col space-y-2">
                 <button id="menu-pautas" class="menu-btn justify-start menu-btn-active">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                    <span class="sidebar-text text-left">Pautas</span>
+                    <span id="menu-pautas-text" class="sidebar-text">Pautas</span>
                 </button>
                 
                 <button id="btn-lancar-atividade-menu" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <span class="sidebar-text text-left">Lançar Atividade</span>
+                    <span id="btn-lancar-atividade-menu-text" class="sidebar-text">Lançar Atividade</span>
                 </button>
 
                 <button id="menu-dashboard" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>
-                    <span class="sidebar-text text-left">Dashboard</span>
+                    <span id="menu-dashboard-text" class="sidebar-text">Dashboard</span>
+                </button>
+
+                <button id="menu-visual-equipe" class="menu-btn justify-start">
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    <span id="menu-visual-equipe-text" class="sidebar-text">Visual Equipe</span>
                 </button>
 
                 <button id="menu-admin" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    <span class="sidebar-text text-left">Administrativo</span>
+                    <span id="menu-admin-text" class="sidebar-text">Administrativo</span>
                 </button>
 
                 <button id="menu-tema" class="menu-btn justify-start">
                     <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a4 4 0 014-4h10a4 4 0 014 4v12a4 4 0 01-4 4H7zm0 0l8.5-8.5M7 3v18m8.5-18l-8.5 8.5m0 0L11 11"></path></svg>
-                    <span class="sidebar-text text-left">Tema</span>
+                    <span id="menu-tema-text" class="sidebar-text">Tema</span>
                 </button>
             </div>
             
@@ -2182,7 +2969,7 @@
                 </button>
                 
                 <button id="btn-logout" class="menu-btn justify-start w-full">
-                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    <svg class="w-6 h-6 mr-3 sidebar-icon-margin sidebar-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     <span class="sidebar-text text-left">Sair</span>
                 </button>
                 
@@ -2192,31 +2979,37 @@
                 </div>
             </div>
         </nav>
-        
-        <!-- Conteúdo Principal -->
-        <div id="main-content-wrapper" class="md:ml-64 transition-all duration-300 ease-in-out">
-            <!-- Header (Mobile) -->
-            <header class="md:hidden bg-white shadow-sm sticky top-0 z-20">
-                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div class="flex justify-between items-center h-16">
-                        <!-- Botão Menu Mobile -->
-                        <button id="mobile-menu-button" class="text-stone-500 hover:text-stone-800">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-                        </button>
-                        
-                        <h1 class="text-xl font-bold text-[var(--color-accent-dark)]">
-                            Gestão de Pautas
-                        </h1>
-                        
-                        <!-- Espaçador -->
-                        <div></div>
-                    </div>
-                </div>
-            </header>
 
-            <!-- Conteúdo da View -->
-            <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Conteúdo Principal -->
+        <main id="main-content-wrapper" class="md:ml-64 transition-all duration-300 ease-in-out p-6">
             
+            <!-- Filtros Globais (Visível em Pautas e Dashboard) -->
+            <div id="filtros-globais" class="bg-[var(--color-card)] p-3 rounded-lg shadow-sm mb-4">
+                <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                    <select id="filter-periodo" class="form-select text-sm">
+                        <option value="semana">Esta Semana</option>
+                        <option value="mes">Este Mês</option> 
+                        <option value="hoje">Hoje</option>
+                        <option value="todos">Todos</option>
+                    </select>
+                    <select id="filter-funcionario" class="form-select text-sm">
+                        <option value="todos">Todos Funcionários</option>
+                    </select>
+                    <select id="filter-cargo" class="form-select text-sm">
+                        <option value="todos">Todos Cargos</option>
+                    </select>
+                    <select id="filter-cliente" class="form-select text-sm">
+                        <option value="todos">Todos Clientes</option>
+                    </select>
+                    <select id="filter-tarefa" class="form-select text-sm">
+                        <option value="todos">Todas Tarefas</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Conteúdo Dinâmico -->
+            <div class="mt-6">
                 <!-- VIEW: PAUTAS -->
                 <div id="main-view-pautas">
                     <div class="flex items-center justify-between mb-4">
@@ -2226,31 +3019,6 @@
                             <button data-view="lista" class="sub-nav-btn sub-nav-btn-inactive">Lista Geral</button>
                         </div>
                     </div>
-                    
-                    <!-- Filtros Globais -->
-                    <div class="bg-[var(--color-card)] p-3 rounded-lg shadow-sm mb-4">
-                        <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                            <select id="filter-periodo" class="form-select text-sm">
-                                <option value="semana">Esta Semana</option>
-                                <option value="hoje">Hoje</option>
-                                <option value="todos">Todos</option>
-                            </select>
-                            <select id="filter-funcionario" class="form-select text-sm">
-                                <option value="todos">Todos Funcionários</option>
-                            </select>
-                            <select id="filter-cargo" class="form-select text-sm">
-                                <option value="todos">Todos Cargos</option>
-                            </select>
-                            <select id="filter-cliente" class="form-select text-sm">
-                                <option value="todos">Todos Clientes</option>
-                            </select>
-                            <select id="filter-tarefa" class="form-select text-sm">
-                                <option value="todos">Todas Tarefas</option>
-                            </select>
-                        </div>
-                    </div>
-                    
                     <div id="pautas-content">
                         <!-- Conteúdo Pautas (Calendário/Lista) renderizado aqui -->
                     </div>
@@ -2258,15 +3026,27 @@
                 
                 <!-- VIEW: DASHBOARD -->
                 <div id="main-view-dashboard" class="hidden">
-                    <!-- Filtros (Dashboard também usa os filtros) -->
-                    <div class="bg-[var(--color-card)] p-3 rounded-lg shadow-sm mb-4">
-                        <h3 class="text-sm font-medium text-stone-600 mb-2">Filtros Globais</h3>
-                        <p class="text-xs text-stone-500 mb-2">Os filtros de Pautas também se aplicam ao Dashboard.</p>
-                    </div>
-                    
                     <div id="dashboard-content">
-                        <div class="text-center p-10 text-stone-500">
-                            Carregando dashboard...
+                        <!-- Conteúdo Dashboard renderizado aqui -->
+                    </div>
+                </div>
+                
+                <!-- VIEW: VISUAL EQUIPE (NOVA) -->
+                <div id="main-view-visual-equipe" class="hidden">
+                    <div class="flex flex-col gap-6"> 
+                        <!-- Wrapper Direito para Lista Geral (Movido para Cima) -->
+                        <div id="visual-lista-wrapper">
+                             <h2 class="text-xl font-semibold text-stone-700 mb-4">Lista Geral (Visão Equipe)</h2>
+                            <div id="lista-content-visual">
+                                <!-- renderLista() vai preencher aqui -->
+                            </div>
+                        </div>
+                        <!-- Wrapper Esquerdo para Dashboard (Movido para Baixo) -->
+                        <div id="visual-dashboard-wrapper">
+                            <h2 class="text-xl font-semibold text-stone-700 mb-4">Dashboard (Visão Equipe)</h2>
+                            <div id="dashboard-content-visual">
+                                <!-- renderDashboard_Slim() vai preencher aqui -->
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2278,91 +3058,40 @@
                             <button data-view="funcionarios" class="sub-nav-btn sub-nav-btn-active">Funcionários</button>
                             <button data-view="cargos" class="sub-nav-btn sub-nav-btn-inactive">Cargos</button>
                             <button data-view="clientes" class="sub-nav-btn sub-nav-btn-inactive">Clientes</button>
-                            <button data-view="tarefas" class="sub-nav-btn sub-nav-btn-inactive">Tarefas Padrão</button>
+                            <button data-view="tarefas" class="sub-nav-btn sub-nav-btn-inactive">Tarefas</button>
                             <button data-view="usuarios" class="sub-nav-btn sub-nav-btn-inactive">Usuários</button>
+                            <button data-view="personalizacao" class="sub-nav-btn sub-nav-btn-inactive">Personalização</button>
                         </div>
                     </div>
                     <div id="admin-content">
                         <!-- Conteúdo Admin (Tabelas) renderizado aqui -->
                     </div>
                 </div>
+            </div>
             
-            </main>
-        </div>
+            <!-- Rodapé com Logo -->
+            <footer class="mt-8 text-center p-4 border-t border-stone-200">
+                <img id="footer-logo" src="" alt="Logo da Empresa" class="h-12 mx-auto" style="display: none;">
+            </footer>
+        </main>
     </div>
 
     <!-- Modal Principal -->
     <div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
         <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div class="flex justify-between items-center p-4 border-b border-stone-200">
+            <div class="flex justify-between items-center p-4 border-b">
                 <h3 id="modal-title" class="text-lg font-semibold text-stone-800"></h3>
                 <button id="btn-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
             </div>
             <div id="modal-content" class="p-6 overflow-y-auto relative">
                 <!-- Formulário renderizado aqui -->
                 <div id="modal-loading" class="hidden absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center">
-                    <span class="text-[var(--color-accent-dark)]">Carregando...</span>
+                    <span class="text-blue-600">Carregando...</span>
                 </div>
             </div>
-            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t border-stone-200 rounded-b-lg">
+            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
                 <button id="btn-modal-cancel" class="btn-secondary">Cancelar</button>
                 <button id="btn-modal-save" class="btn-primary">Salvar</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Modal de Personalização de Tema -->
-    <div id="theme-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
-        <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div class="flex justify-between items-center p-4 border-b border-stone-200">
-                <h3 class="text-lg font-semibold text-stone-800">Personalizar Tema</h3>
-                <button id="theme-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
-            </div>
-            <div class="p-6 overflow-y-auto space-y-6">
-                
-                <!-- Temas Rápidos -->
-                <div>
-                    <label class="block text-sm font-medium text-stone-700 mb-2">Temas Rápidos</label>
-                    <div class="flex space-x-3">
-                        <button id="theme-quick-sereno" class="theme-swatch bg-[#648AAE]" title="Tema Azul Sereno"></button>
-                        <button id="theme-quick-solar" class="theme-swatch bg-[#FFC82E]" title="Tema Amarelo Solar"></button>
-                        <button id="theme-quick-laranja" class="theme-swatch bg-[#F97422]" title="Tema Laranja"></button>
-                    </div>
-                </div>
-
-                <!-- Cor Customizada -->
-                <div>
-                    <label class="block text-sm font-medium text-stone-700 mb-2">Cor de Destaque</label>
-                    <div class="flex items-center space-x-2">
-                        <input id="theme-color-picker" type="color" class="w-10 h-10 p-0 border-none rounded-md cursor-pointer" value="#648AAE">
-                        <input id="theme-hex-input" type="text" class="form-input w-28" placeholder="#648AAE">
-                        <span class="text-xs text-stone-500">Digite o código Hex</span>
-                    </div>
-                </div>
-                
-                <!-- Fonte -->
-                <div>
-                    <label for="theme-font-select" class="block text-sm font-medium text-stone-700">Fonte da Aplicação</LabeL>
-                    <select id="theme-font-select" class="form-select mt-1">
-                        <option value="Inter">Inter (Padrão)</option>
-                        <option value="Roboto Slab">Roboto Slab (Serifada)</option>
-                        <option value="Inconsolata">Inconsolata (Mono)</option>
-                    </select>
-                </div>
-                
-                <!-- Tamanho da Fonte -->
-                <div>
-                    <label class="block text-sm font-medium text-stone-700 mb-2">Tamanho do Texto</label>
-                    <div class="flex items-center space-x-2">
-                        <button id="theme-font-size-decrease" class="btn-secondary px-3 py-1">A-</button>
-                        <button id="theme-font-size-increase" class="btn-secondary px-3 py-1">A+</button>
-                    </div>
-                </div>
-                
-            </div>
-            <div class="flex justify-between items-center p-4 bg-[var(--color-bg-alt)] border-t border-stone-200 rounded-b-lg">
-                <button id="theme-reset" class="btn-link-danger text-sm">Restaurar Padrões</button>
-                <button id="theme-modal-close-bottom" class="btn-primary" onclick="document.getElementById('theme-modal').classList.add('hidden')">Fechar</button>
             </div>
         </div>
     </div>
@@ -2374,9 +3103,9 @@
                 <h3 class="text-lg font-medium text-stone-900">Confirmar Exclusão</h3>
                 <p class="mt-2 text-sm text-stone-600">Você tem certeza que deseja excluir este item? Esta ação não pode ser desfeita.</p>
             </div>
-            <div class="flex justify-end space-x-3 p-4 bg-stone-50 rounded-b-lg">
+            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] rounded-b-lg">
                 <button id="btn-cancel-delete" class="btn-secondary">Cancelar</button>
-                <button id="btn-confirm-delete" class="btn-danger">Excluir</button>
+                <button id="btn-confirm-delete" class="px-4 py-2 bg-red-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-red-700">Excluir</button>
             </div>
         </div>
     </div>
@@ -2385,6 +3114,61 @@
     <div id="toast" class="hidden fixed bottom-4 right-4 max-w-xs text-white px-4 py-3 rounded-lg shadow-lg z-50">
         <span id="toast-message"></span>
     </div>
+    
+    <!-- Modal de Tema -->
+    <div id="theme-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
+        <div class="bg-[var(--color-card)] rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-semibold text-stone-800">Personalizar Aparência (Local)</h3>
+                <button id="theme-modal-close" class="text-stone-500 hover:text-stone-800 text-2xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-6">
+                
+                <div>
+                    <label class="block text-sm font-medium text-stone-700 mb-2">Temas Rápidos</label>
+                    <div class="flex space-x-3">
+                        <button id="theme-quick-sereno" class="theme-swatch bg-[#648AAE]" title="Tema Azul Sereno (Padrão)"></button>
+                        <button id="theme-quick-solar" class="theme-swatch bg-[#FFC82E]" title="Tema Amarelo Solar"></button>
+                        <button id="theme-quick-laranja" class="theme-swatch bg-[#F97422]" title="Tema Laranja"></button>
+                    </div>
+                </div>
 
+                <div>
+                    <label for="theme-color-picker" class="block text-sm font-medium text-stone-700">Cor de Destaque Personalizada</label>
+                    <div class="flex items-center space-x-2 mt-1">
+                        <input type="color" id="theme-color-picker" class="w-14 h-10 p-1 border border-stone-300 rounded-md">
+                        <input type="text" id="theme-hex-input" class="form-input w-full" placeholder="#648AAE">
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="theme-font-select" class="block text-sm font-medium text-stone-700">Fonte da Aplicação</label>
+                        <select id="theme-font-select" class="form-select mt-1">
+                            <option>Inter</option>
+                            <option>Roboto Slab</option>
+                            <option>Inconsolata</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-stone-700">Tamanho do Texto</label>
+                        <div class="flex items-center space-x-2 mt-1">
+                            <button id="theme-font-size-decrease" class="btn-secondary text-lg font-bold w-full">-</button>
+                            <button id="theme-font-size-increase" class="btn-secondary text-lg font-bold w-full">+</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                     <p class="text-xs text-stone-500">Estas alterações são salvas apenas no seu navegador. O Administrador pode definir o tema global em "Administrativo > Personalização".</p>
+                </div>
+
+            </div>
+            <div class="flex justify-end space-x-3 p-4 bg-[var(--color-bg-alt)] border-t rounded-b-lg">
+                <button id="theme-reset" class="btn-link-danger">Resetar (Local)</button>
+            </div>
+        </div>
+    </div>
+    
 </body>
 </html>
